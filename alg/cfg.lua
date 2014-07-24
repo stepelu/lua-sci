@@ -11,8 +11,9 @@
 
 return {
   unroll = 16,  -- Non-negative number, 0 to disable.
-  buffer = 2e6, -- Bytes, non-negative number, 0 to disable.
-  
-  blasheader = "sci.alg.blas.openblas_h",
-  blaslib    = "libopenblas",
+  buffer = 2e6, -- Bytes, non-negative number, 0 to disable. 
+  blas = {
+    enable = true,
+    banner = false,
+  },
 }
