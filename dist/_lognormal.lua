@@ -9,14 +9,12 @@
 -- license: full text in file LICENSE.TXT in the library's root folder.
 --------------------------------------------------------------------------------
 
-local xsys    = require "xsys"
-local ffi     = require "ffi"
-local _normal = require "sci.dist._normal"
+local xsys = require "xsys"
+local ffi  = require "ffi"
+local math = require "sci.math"
 
-local exp, log, sqrt, pi = xsys.from(math, 
-     "exp, log, sqrt, pi")
-
-local normal_sample = _normal.sample
+local exp, log, sqrt, pi, _iphifast = xsys.from(math, 
+     "exp, log, sqrt, pi, _iphifast")
 
 local logn_mt = {
   __new = function(ct, mu, sigma)
@@ -51,7 +49,7 @@ local logn_mt = {
     return (exp(self._sigma^2) - 1)*exp(2*self._mu + self._sigma^2)
   end,
   sample = function(self, rng)
-    return exp(normal_sample(self, rng))
+    return exp(_iphifast(rng:sample())*self._sigma + self._mu)
   end,
 }
 logn_mt.__index = logn_mt
