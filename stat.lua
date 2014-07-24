@@ -16,18 +16,17 @@
 -- http://www.johndcook.com/standard_deviation.html
 
 -- TODO: BIC, AIC.
--- TODO: Function combine(...) to join results for parallel computing.
+-- TODO: Function join(...) to join results for parallel computing.
 
--- TODO: Speed-up via OpenBLAS?
+-- TODO: Speed-up via OpenBLAS.
 -- TODO: Speed-up via FFI cdata.
 
-local alg  = require "sci.alg" 
-local dist = require "sci.dist"
-local quad = require "sci.quad"
+local ffi = require "ffi" 
+local alg = require "sci.alg"
 
-local sqrt, abs, max = math.sqrt, math.abs, math.max
-local vec, mat, diag = alg.vec, alg.mat, alg.diag
-local type = type
+local sqrt, abs, max, log = math.sqrt, math.abs, math.max, math.log
+local vec, mat = alg.vec, alg.mat
+local typeof, metatype = ffi.typeof, ffi.metatype
 
 local function mean(x)
   if #x < 1 then
@@ -76,25 +75,57 @@ local function cor(x, y)
   return cov(x, y)/sqrt(var(x)*var(y))
 end
 
-local mean_mt = {
+local function chk_dim(self, x)
+  local d = self._d
+  if d ~= #x then
+    error("argument with #="..#x.." passed to statistics of dimension="..d)
+  end
+  return d
+end
+
+local function chk_eq_square(X, Y)
+  local n, m = X:nrow(), X:ncol()
+  local ny, my = Y:nrow(), Y:ncol()
+  if not (n == m and n == ny and n == my) then
+    error("arguments must be square matrices of equal size, passed: "..n.."x"..m
+        ..", "..ny.."x"..my)
+  end
+  return n, m
+end
+
+local function dim(self)
+  return self._d
+end
+
+local function len(self)
+  return self._n
+end
+
+local meand_mt = {
+  dim = dim,
+  len = len,
   clear = function(self)
     self._n = 0
-    self._mu:fill(0)
+    self._mu:clear()
   end,
   push = function(self, x)
+    local d = chk_dim(self, x)
     self._n = self._n + 1
-    self._mu:set(self._mu + (x - self._mu)/self._n)    
+    for i=1,d do self._mu[i] = self._mu[i] + (x[i] - self._mu[i])/self._n end   
   end,
   mean = function(self, mean)
+    local d = chk_dim(self, mean)
     if self._n < 1 then
       error("n >= 1 required: n="..self._n)
     end
-    mean:set(self._mu)
+    for i=1,d do mean[i] = self._mu[i] end
   end,
 }
-mean_mt.__index = mean_mt
+meand_mt.__index = meand_mt
 
 local mean0_mt = {
+  dim = dim,
+  len = len,
   clear = function(self)
     self._n = 0
     self._mu = 0
@@ -109,30 +140,43 @@ local mean0_mt = {
 }
 mean0_mt.__index = mean0_mt
 
-local var_mt = {
+local meand_ct = typeof("struct { int32_t _d, _n; $& _mu; }", vec)
+local mean0_ct = typeof("struct { int32_t _d, _n; double _mu; }")
+meand_ct = metatype(meand_ct, meand_mt)
+mean0_ct = metatype(mean0_ct, mean0_mt)
+
+local vard_mt = {
+  dim = dim,
+  len = len,
   clear = function(self)
     self._n = 0
-    self._mu:fill(0)
-    self._s2:fill(0)
+    self._mu:clear()
+    self._s2:clear()
   end,
   push = function(self, x)
+    local d = chk_dim(self, x)
     self._n = self._n + 1
     local r = 1/self._n
-    self._delta:set(x - self._mu)
-    self._mu:set(self._mu + self._delta*r)
-    self._s2:set(self._s2 + self._delta*(x - self._mu))
+    for i=1,d do
+      self._delta[i] = x[i] - self._mu[i]
+      self._mu[i] = self._mu[i] + self._delta[i]*r
+      self._s2[i] = self._s2[i] + self._delta[i]*(x[i] - self._mu[i])
+    end
   end,
-  mean = mean_mt.mean,
+  mean = meand_mt.mean,
   var = function(self, var)
+    local d = chk_dim(self, var)
     if self._n < 2 then
       error("n >= 2 required: n="..self._n)
     end
-    var:set(self._s2/(self._n - 1))
+    for i=1,d do var[i] = self._s2[i]/(self._n - 1) end
   end,
 }
-var_mt.__index = var_mt
+vard_mt.__index = vard_mt
 
 local var0_mt = {
+  dim = dim,
+  len = len,
   clear = function(self)
     self._n = 0
     self._mu = 0
@@ -155,87 +199,137 @@ local var0_mt = {
 }
 var0_mt.__index = var0_mt
 
+local vard_ct = typeof("struct { int32_t _d, _n; $& _mu; $& _delta; $& _s2; }", 
+  vec, vec, vec)
+local var0_ct = typeof("struct { int32_t _d, _n; double _mu, _delta, _s2; }")
+vard_ct = metatype(vard_ct, vard_mt)
+var0_ct = metatype(var0_ct, var0_mt)
+
 -- Y *can* alias X.
 local function covtocor(X, Y)
-  local n, m = X:nrow(), X:ncol()
-  local ny, my = Y:nrow(), Y:ncol()
-  if not (n == m and n == ny and n == my) then
-    error("dimensions of X and Y must agree: X is "..n.."x"..m
-        ..", Y is "..ny.."x"..my)
-  end
+  local n, m = chk_eq_square(X, Y)
   for r=1,n do
-    for c=1,n do
+    for c=1,m do
       if r ~= c then
         Y[r][c] = X[r][c]/sqrt(X[r][r]*X[c][c])
       end
     end
   end
-  Y:fill(1, diag())
+  for i=1,n do Y[i][i] = 1 end
 end
 
-local cov_mt = {
+local covd_mt = {
+  dim = dim,
+  len = len,
   clear = function(self)
     self._n = 0
-    self._mu:fill(0)
-    self._s2:fill(0)
+    self._mu:clear()
+    self._s2:clear()
   end,
   push = function(self, x)
+    local d = chk_dim(self, x)
     self._n = self._n + 1
     local r = 1/self._n
-    local delta, mu, s2 = self._delta, self._mu, self._s2
-    delta:set(x - mu)
-    mu:set(mu + delta*r)
-    for i=1,#delta do for j=1,#delta do
-      s2[i][j] = s2[i][j] + delta[i]*(x[j] - mu[j])
+    for i=1,d do
+      self._delta[i] = x[i] - self._mu[i]
+      self._mu[i] = self._mu[i] + self._delta[i]*r
+    end
+    for i=1,d do for j=1,d do
+      self._s2[i][j] = self._s2[i][j] + self._delta[i]*(x[j] - self._mu[j])
     end end
   end,
-  mean = mean_mt.mean,
+  mean = meand_mt.mean,
   var = function(self, var)
+    local d = chk_dim(self, var)
     if self._n < 2 then
       error("n >= 2 required: n="..self._n)
     end
-    var:set(self._s2/(self._n - 1), diag())
+    for i=1,d do var[i] = self._s2[i][i]/(self._n - 1) end
   end,
   cov = function(self, cov)
+    local n, m = chk_eq_square(self._s2, cov)
     if self._n < 2 then
       error("n >= 2 required: n="..self._n)
     end
-    cov:set(self._s2/(self._n - 1))
+    for i=1,n do for j=1,m do 
+      cov[i][j] = self._s2[i][j]/(self._n - 1)
+    end end
   end,
   cor = function(self, cor)
     self:cov(cor)
     covtocor(cor, cor)
   end
 }
-cov_mt.__index = cov_mt
+covd_mt.__index = covd_mt
+
+local covd_ct = typeof("struct { int32_t _d, _n; $& _mu; $& _delta; $& _s2; }", 
+  vec, vec, mat)
+covd_ct = metatype(covd_ct, covd_mt)
+
+local samples_mt = {
+  dim = dim,
+  len = len,
+  clear = function(self)
+    self._n = 0
+    self._x = { }
+  end,
+  push = function(self, x)
+    local d = chk_dim(self, x)
+    self._n = self._n + 1
+    self._x[n] = x:copy()
+  end,
+  samples = function(self, samples)
+    local n, m = samples:nrow(), samples:ncol()
+    if n ~= self._n or m ~= self._d then
+      error("output matrix has wrong dimensions")
+    end
+    for i=1,n do for j=1,m do 
+      samples[i][j] = self._x[i][j]
+    end end
+  end,
+}
+samples_mt.__index = samples_mt
+
+local anchor = setmetatable({ }, { __mode = "k" })
 
 local function olmean(dim)
   if dim == 0 then
-    return setmetatable({ _n = 0, _mu = 0 }, mean0_mt)
+    return mean0_ct(dim)
   else
-    return setmetatable({ _n = 0, _mu = vec(dim) }, mean_mt)
+    local mu = vec(dim)
+    local v = meand_ct(dim, 0, mu)
+    anchor[v] = { mu }
+    return v
   end
 end
 local function olvar(dim)
   if dim == 0 then
-    return setmetatable({ _n = 0, _mu = 0, _delta = 0, _s2 = 0 }, var0_mt)
+    return var0_ct(dim)
   else
-    return setmetatable({ _n = 0, _mu = vec(dim), _delta = vec(dim), 
-      _s2 = vec(dim) }, var_mt)
+    local mu, delta, s2 = vec(dim), vec(dim), vec(dim)
+    local v = vard_ct(dim, 0, mu, delta, s2)
+    anchor[v] = { mu, delta, s2 }
+    return v
   end
 end
 local function olcov(dim)
-    return setmetatable({ _n = 0, _mu = vec(dim), _delta = vec(dim), 
-      _s2 = mat(dim, dim) }, cov_mt)
+    local mu, delta, s2 = vec(dim), vec(dim), mat(dim, dim)
+    local v = covd_ct(dim, 0, mu, delta, s2)
+    anchor[v] = { mu, delta, s2 }
+    return v
+end
+local function olsamples(dim)
+  return setmetatable({ _d = dim, _n = 0, _x = { } }, samples_mt)
 end
 
 return {
-  mean = mean,
-  var  = var,
-  cov  = cov,
-  cor  = cor,
-  
-  olmean = olmean,
-  olvar  = olvar, 
-  olcov  = olcov,
+  mean      = mean,
+  var       = var,
+  cov       = cov,
+  cor       = cor,
+  covtocor  = covtocor,
+  olmean    = olmean,
+  olvar     = olvar, 
+  olcov     = olcov,
+  olsamples = olsamples, 
 }
