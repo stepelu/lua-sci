@@ -92,7 +92,5 @@ norm_mt.__index = norm_mt
 local dist = ffi.metatype("struct {double _mu, _sigma;}", norm_mt)
 
 return {
-  dist   = dist,
-  mt     = norm_mt,
-  sample = norm_mt.sample,
+  dist = dist,
 }

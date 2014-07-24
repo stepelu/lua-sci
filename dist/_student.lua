@@ -73,6 +73,5 @@ stud_mt.__index = stud_mt
 local dist = ffi.metatype("struct { double _nu; }", stud_mt)
 
 return {
-  dist = dist,
-  mt   = stud_mt,
+  dist = dist
 }

@@ -52,8 +52,10 @@ local dist = ffi.metatype("struct { double _a, _b; }", uni_mt)
 -- Multi variate uniform distribution:
 local mvuni_mt = {
   sample = function(self, rng, x)
-    for i=1,#x do x[i] = rng:sample() end    
-    x:set(self._a + (self._b - self._a)*x)
+    local a, b = self._a, self._b
+    for i=1,#x do 
+      x[i] = a[i] + (b[i] - a[i])*rng:sample()
+    end
   end,
 }
 mvuni_mt.__index = mvuni_mt
@@ -63,10 +65,12 @@ local function mvdist(a, b)
     error("distribution parameters must be set at construction")
   end
   if #a ~= #b then
-    error("a and b must have the same size, #a is "..#a..", #b is "..#b)
+    error("a and b must have the same size: #a="..#a..", #b="..#b)
   end
-  if not (a < b) then 
-    error("a < b is required, a is "..a..", b is "..b)
+  for i=1,#a do
+    if not (a[i] < b[i]) then 
+      error("a < b is required: a[i]="..a[i]..", b[i]="..b[i].." for i="..i)
+    end
   end
   return setmetatable({ _a = a:copy(), _b = b:copy() }, mvuni_mt)
 end
