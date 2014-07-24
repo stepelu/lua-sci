@@ -34,7 +34,7 @@ local function round(x)
 end
 
 local function step(x) -- 1 if x >= 0, 0 otherwise.
-  return min(1, max(0, floor(x) + 1))
+  return max(0, min(floor(x) + 1, 1))
 end
 
 local function sign(x) -- 1 if x >= 0, -1 otherwise.
@@ -212,48 +212,43 @@ local function beta(a, b)
 end
 
 -- Support for generic arguments -----------------------------------------------
-
-local function isn(x)
-  return type(x) == "number"
-end
-
 local function recmax(x, y, ...)
   return y and recmax(
-    not isn(x) and x:max(y) or (not isn(y) and y.max(x, y) or max(x, y)), ...
-    ) or x
+    type(x) ~= "number" and x:max(y) or (type(y) ~= "number" and y.max(x, y) or 
+      max(x, y)), ...) or x
 end
 
 local function recmin(x, y, ...)
   return y and recmin(
-    not isn(x) and x:min(y) or (not isn(y) and y.min(x, y) or min(x, y)), ...
-    ) or x
+    type(x) ~= "number" and x:min(y) or (type(y) ~= "number" and y.min(x, y) or 
+      min(x, y)), ...) or x
 end
 
 local disp2 = { 
   atan2 = function(x, y)
-    return not isn(x) and x:atan2(y) 
-       or (not isn(y) and y.atan2(x, y) or atan2(x, y))
+    return type(x) ~= "number" and x:atan2(y) 
+       or (type(y) ~= "number" and y.atan2(x, y) or atan2(x, y))
   end,
   fmod = function(x, y)
-    return not isn(x) and x:fmod(y) 
-       or (not isn(y) and y.fmod(x, y) or fmod(x, y))
+    return type(x) ~= "number" and x:fmod(y) 
+       or (type(y) ~= "number" and y.fmod(x, y) or fmod(x, y))
   end,
   ldexp = function(x, y)
-    return not isn(x) and x:ldexp(y) 
-       or (not isn(y) and y.ldexp(x, y) or ldexp(x, y))
+    return type(x) ~= "number" and x:ldexp(y) 
+       or (type(y) ~= "number" and y.ldexp(x, y) or ldexp(x, y))
   end,
   pow = function(x, y)
-    return not isn(x) and x:pow(y) 
-       or (not isn(y) and y.pow(x, y) or pow(x, y))
+    return type(x) ~= "number" and x:pow(y) 
+       or (type(y) ~= "number" and y.pow(x, y) or pow(x, y))
   end,
   
   beta = function(x, y)
-    return not isn(x) and x:beta(y) 
-       or (not isn(y) and y.beta(x, y) or beta(x, y))
+    return type(x) ~= "number" and x:beta(y) 
+       or (type(y) ~= "number" and y.beta(x, y) or beta(x, y))
   end,
   logbeta = function(x, y)
-    return not isn(x) and x:logbeta(y) 
-       or (not isn(y) and y.logbeta(x, y) or logbeta(x, y))
+    return type(x) ~= "number" and x:logbeta(y) 
+       or (type(y) ~= "number" and y.logbeta(x, y) or logbeta(x, y))
   end,
 }
 
@@ -267,26 +262,26 @@ local generic = {
   randomseed = randomseed,
   
   -- Generic dispatch based on one variable:
-  abs   = function(x) return isn(x) and abs(x)   or x:abs() end,
-  acos  = function(x) return isn(x) and acos(x)  or x:acos() end,
-  asin  = function(x) return isn(x) and asin(x)  or x:asin() end,
-  atan  = function(x) return isn(x) and atan(x)  or x:atan() end,
-  ceil  = function(x) return isn(x) and ceil(x)  or x:ceil()  end,
-  cos   = function(x) return isn(x) and cos(x)   or x:cos() end,
-  cosh  = function(x) return isn(x) and cosh(x)  or x:cosh() end,
-  deg   = function(x) return isn(x) and deg(x)   or x:deg() end,
-  exp   = function(x) return isn(x) and exp(x)   or x:exp() end,
-  floor = function(x) return isn(x) and floor(x) or x:floor() end,
-  frexp = function(x) return isn(x) and frexp(x) or x:frexp() end,
-  log   = function(x) return isn(x) and log(x)   or x:log() end,
-  log10 = function(x) return isn(x) and log10(x) or x:log10() end,
-  modf  = function(x) return isn(x) and modf(x)  or x:modf() end,
-  rad   = function(x) return isn(x) and rad(x)   or x:rad() end,
-  sin   = function(x) return isn(x) and sin(x)   or x:sin() end,
-  sinh  = function(x) return isn(x) and sinh(x)  or x:sinh() end,
-  sqrt  = function(x) return isn(x) and sqrt(x)  or x:sqrt() end,
-  tan   = function(x) return isn(x) and tan(x)   or x:tan() end,
-  tanh  = function(x) return isn(x) and tanh(x)  or x:tanh() end,  
+  abs   = function(x) return type(x) == "number" and abs(x)   or x:abs() end,
+  acos  = function(x) return type(x) == "number" and acos(x)  or x:acos() end,
+  asin  = function(x) return type(x) == "number" and asin(x)  or x:asin() end,
+  atan  = function(x) return type(x) == "number" and atan(x)  or x:atan() end,
+  ceil  = function(x) return type(x) == "number" and ceil(x)  or x:ceil()  end,
+  cos   = function(x) return type(x) == "number" and cos(x)   or x:cos() end,
+  cosh  = function(x) return type(x) == "number" and cosh(x)  or x:cosh() end,
+  deg   = function(x) return type(x) == "number" and deg(x)   or x:deg() end,
+  exp   = function(x) return type(x) == "number" and exp(x)   or x:exp() end,
+  floor = function(x) return type(x) == "number" and floor(x) or x:floor() end,
+  frexp = function(x) return type(x) == "number" and frexp(x) or x:frexp() end,
+  log   = function(x) return type(x) == "number" and log(x)   or x:log() end,
+  log10 = function(x) return type(x) == "number" and log10(x) or x:log10() end,
+  modf  = function(x) return type(x) == "number" and modf(x)  or x:modf() end,
+  rad   = function(x) return type(x) == "number" and rad(x)   or x:rad() end,
+  sin   = function(x) return type(x) == "number" and sin(x)   or x:sin() end,
+  sinh  = function(x) return type(x) == "number" and sinh(x)  or x:sinh() end,
+  sqrt  = function(x) return type(x) == "number" and sqrt(x)  or x:sqrt() end,
+  tan   = function(x) return type(x) == "number" and tan(x)   or x:tan() end,
+  tanh  = function(x) return type(x) == "number" and tanh(x)  or x:tanh() end,  
   
   -- Generic dispatch based on two variables:
   atan2 = disp2.atan2,
@@ -299,13 +294,20 @@ local generic = {
   min = recmin,  
     
   -- General dispatch based on one variable:
-  gamma    = function(x) return isn(x) and gamma(x)    or x:gamma() end,
-  iphi     = function(x) return isn(x) and iphi(x)     or x:iphi() end,
-  loggamma = function(x) return isn(x) and loggamma(x) or x:loggamma() end,
-  phi      = function(x) return isn(x) and phi(x)      or x:phi() end,
-  round    = function(x) return isn(x) and round(x)    or x:round() end,
-  sign     = function(x) return isn(x) and sign(x)     or x:sign() end,
-  step     = function(x) return isn(x) and step(x)     or x:step() end,
+  gamma    = function(x) return type(x) == "number" and gamma(x)    or 
+    x:gamma() end,
+  iphi     = function(x) return type(x) == "number" and iphi(x)     or 
+    x:iphi() end,
+  loggamma = function(x) return type(x) == "number" and loggamma(x) or 
+    x:loggamma() end,
+  phi      = function(x) return type(x) == "number" and phi(x)      or 
+    x:phi() end,
+  round    = function(x) return type(x) == "number" and round(x)    or 
+    x:round() end,
+  sign     = function(x) return type(x) == "number" and sign(x)     or 
+    x:sign() end,
+  step     = function(x) return type(x) == "number" and step(x)     or 
+    x:step() end,
   
   -- Generic dispatch based on two variables:
   beta    = disp2.beta,
@@ -318,19 +320,16 @@ local generic = {
 --------------------------------------------------------------------------------
 
 local M = xsys.table.merge(math, {
-  generic     = generic,
-  
+  generic     = generic,  
   round       = round,
   step        = step,
-  sign        = sign,
-  
+  sign        = sign,  
   phi         = phi,
   iphi        = iphi,
   gamma       = gamma,
   loggamma    = loggamma,
   logbeta     = logbeta,
-  beta        = beta,
-  
+  beta        = beta,  
   _iphifast   = iphifast,
 })
 
