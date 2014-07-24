@@ -9,13 +9,21 @@
 -- license: full text in file LICENSE.TXT in the library's root folder.
 --------------------------------------------------------------------------------
 
--- TODO: Optimized: phi, iphi, gamma, loggamma, logbeta, beta.
+-- TODO: Specialized gamma, loggamma, beta, logbeta.
+
+-- TODO: Introduce specialized matrix multiply, inverse, ecc ecc using BLAS
+-- TODO: (when available) based on the results summarized in Mike Giles paper.
+
+-- PERF: We considered one-shot version with matrix-tape which computes the 
+-- PERF: gradient in one function call but gains where not substantial and 
+-- PERF: memory management is more complicated. Probably better to just 
+-- PERF: introduce reverse-mode differentiation directly.
 
 local ffi  = require "ffi"
 local xsys = require "xsys"
 local math = require "sci.math"
 
-local type, exec = type, xsys.exec
+local type = type
 
 local
 abs, acos, asin, atan, atan2, ceil, cos, cosh, deg, exp, floor, fmod, frexp,
@@ -31,14 +39,10 @@ round, step, sign,
 phi, iphi, gamma, loggamma, logbeta, beta
 ]])
 
-local function isn(x)
-  return type(x) == "number"
-end
-
 -- Forward mode, single directional derivative ---------------------------------
 local dn -- Dual number: value + adjoint value.
 
--- Modified from sci.math:
+-- Modified from sci.math, works *only* with dual number type.
 local dngamma, dnloggamma
 do
   -- r(10).
@@ -113,8 +117,8 @@ end
 -- Domain: a > 0 and b > 0.
 local function dnlogbeta(a, b)
   if a <= 0 or b <= 0 then return 0/0 end
-  local lga = isn(a) and loggamma(a) or dnloggamma(a)
-  local lgb = isn(b) and loggamma(b) or dnloggamma(b)
+  local lga = type(a) == "number" and loggamma(a) or dnloggamma(a)
+  local lgb = type(b) == "number" and loggamma(b) or dnloggamma(b)
   return lga + lgb - dnloggamma(a + b)
 end
 
@@ -123,6 +127,12 @@ local function dnbeta(a, b)
   return dnlogbeta(a, b):exp()
 end
 
+-- Derivative of phi function:
+local function dphi(x)
+  return (1/sqrt(2*pi))*exp(-0.5*x^2)
+end
+
+-- Use branchless optimization whenever finite values:
 local function dnmax(x, y)
   x, y = dn(x), dn(y)
   if max(abs(x._v), abs(y._v)) == 1/0 then
@@ -132,7 +142,7 @@ local function dnmax(x, y)
     return dn(z*y._v + (1 - z)*x._v, z*y._a + (1 - z)*x._a)
   end
 end
-
+-- Use branchless optimization whenever finite values:
 local function dnmin(x, y)
   x, y = dn(x), dn(y)
   if max(abs(x._v), abs(y._v)) == 1/0 then
@@ -161,9 +171,9 @@ local dn_mt = {
     return dn(x._v/y._v, (x._a*y._v - y._a*x._v)/y._v^2)
   end,
   __pow = function(x, y) -- Optimized version.
-    if isn(y) then
+    if type(y) == "number" then
       return dn(x._v^y, y*x._v^(y-1)*x._a)
-    elseif isn(x) then
+    elseif type(x) == "number" then
       return dn(x^y._v, x^y._v*log(x)*y._a)
     else
       return dn(x._v^y._v, x._v^y._v*(log(x._v)*y._a + y._v/x._v*x._a))
@@ -179,8 +189,10 @@ local dn_mt = {
     return x._v <= y._v
   end,
   __tostring = function(x)
-    local asign = x._a < 0 and "" or "+" -- Handles nan as well.
-    return tostring(x._v)..asign..tostring(x._a).."d"
+    return tostring(x._v) -- Better to mimic behavior of numbers.
+  end,
+  __tonumber = function(x) -- Honored only by xsys.string.width.
+    return tonumber(x._v)
   end,
   
   copy = function(x)
@@ -194,26 +206,35 @@ local dn_mt = {
     return x._a
   end,
   
-  exp   = function(x) return dn(exp(x._v),   x._a*exp(x._v)) end,
-  log   = function(x) return dn(log(x._v),   x._a/x._v) end,
-  sin   = function(x) return dn(sin(x._v),   x._a*cos(x._v)) end,
-  cos   = function(x) return dn(cos(x._v),   x._a*(-sin(x._v))) end,
-  sqrt  = function(x) return dn(sqrt(x._v),  x._a/(2*sqrt(x._v))) end,
-  abs   = function(x) return dn(abs(x._v),   x._a*sign(x._v)) end,
+  sin  = function(x) return dn(sin(x._v),  x._a*cos(x._v)) end,
+  cos  = function(x) return dn(cos(x._v),  x._a*(-sin(x._v))) end,
+  tan  = function(x) return dn(tan(x._v),  x._a*(1 + tan(x._v)^2)) end,
+  asin = function(x) return dn(asin(x._v), x._a/sqrt(1 - x._v^2)) end,
+  acos = function(x) return dn(acos(x._v), -x._a/sqrt(1 - x._v^2)) end,
+  atan = function(x) return dn(atan(x._v), x._a/(1 + x._v^2)) end,
+  sinh = function(x) return dn(sinh(x._v), x._a*cosh(x._v)) end,
+  cosh = function(x) return dn(cosh(x._v), x._a*sinh(x._v)) end,
+  tanh = function(x) return dn(tanh(x._v), x._a*(1 - tanh(x._v)^2)) end,
+  exp  = function(x) return dn(exp(x._v),  x._a*exp(x._v)) end,
+  log  = function(x) return dn(log(x._v),  x._a/x._v) end,
+  sqrt = function(x) return dn(sqrt(x._v), x._a/(2*sqrt(x._v))) end,
+  abs  = function(x) return dn(abs(x._v),  x._a*sign(x._v)) end,
   -- Stick to dn type to improve type stability:
   floor = function(x) return dn(floor(x._v), 0) end,
   ceil  = function(x) return dn(ceil(x._v),  0) end,
-  
+  -- Stick to dn type to improve type stability:
   round = function(x) return dn(round(x._v), 0) end,
   step  = function(x) return dn(step(x._v),  0) end,
   sign  = function(x) return dn(sign(x._v),  0) end,
   
-  -- TODO: Specific optimized versions:
-  gamma    = function(x) return dngamma(x) end,
+  gamma    = function(x) return    dngamma(x) end,
   loggamma = function(x) return dnloggamma(x) end,
   
-  beta     = function(x, y) return dnbeta(x, y) end,
+  beta     = function(x, y) return    dnbeta(x, y) end,
   logbeta  = function(x, y) return dnlogbeta(x, y) end,
+
+  phi = function(x) return dn(phi(x._v), x._a*dphi(x._v)) end,
+  iphi = function(x) local y = iphi(x._v); return dn(y, x._a/dphi(y)) end,
 
   max   = dnmax,
   min   = dnmin,
@@ -224,16 +245,70 @@ dn_mt.__index = dn_mt
 -- using dn(number) => adjoint part correctly initialized to 0.
 dn = ffi.metatype("struct { double _v, _a; }", dn_mt)
 
-local algdn, elwdn
+-- To improve type stability we always pass all arguments wrt differentiation
+-- will take place as dual numbers, only one of which will have adj part 
+-- equal to 1.
+local pderf_template = xsys.template[[
+local f, dn = f, dn
+| local args = { }
+| for i=1,n do
+|   args[i] = "x"..i
+| end
+| args = concat(args, ",")
+return function(${args})
+| local dargs = args
+| for i=1,#dxi do
+|   local dx = dxi[i]
+|   dargs = dargs:gsub("x"..dx, "dn(x"..dx..",0)")
+| end
+| local retadj = { } 
+| for i=1,#dxi do
+| local from, to = "dn%(x"..dxi[i]..",0%)", "dn%(x"..dxi[i]..",1%)"
+local y${i} = dn(f(${dargs:gsub(from, to)}))
+| retadj[i] = "y"..i..":adj()"
+| end
+return y1:val(),${concat(retadj, ",")}
+end
+]]
 
-local function valgradf(f, n)
-  algdn = algdn or require("sci.alg").typeof(dn, true)
-  elwdn = elwdn or require("sci.alg").elwf(dn)
+local function derivativef(f, n, ...)
+  assert(1 <= n, "function's argument # must be positive")
+  local dxi
+  if select("#", ...) == 0 then
+    dxi = { }
+    for i=1,n do 
+      dxi[i] = i
+    end
+  else
+    dxi = { ... }
+    for i=1,#dxi do
+      local dx = dxi[i]
+      assert(dx <= n, "differentiating variable outside function's argument #")
+    end
+  end
+  local src = pderf_template({ n = n, dxi = dxi, concat = table.concat })
+  return xsys.exec(src, "<derivative>", { f = f, dn = dn })
+end
+
+-- For forward mode differentiation we could just use grad(f, x, y) to return
+-- f(x) and set y to the gradient of f(x), but gradients are best computed in 
+-- reverse mode differentiation, and a stack will need to be allocated for f, 
+-- the length of which (it's growth-able) likely depends on the f itself hence
+-- it's best stored via a closure.
+local function gradientf(f, n)
+  local algdn = require("sci.alg").typeof(dn, dn)
   local xd = algdn.vec(n)
   return function(x, grad)
-  local val
+    local n = #x
+    if n ~= #grad then
+      error("value length must be equal to gradient length")
+    end
+    if n ~= #xd then
+      error("value and gradient lengths must be as per initialization")
+    end
+    local val = 0
     for i=1,n do
-      xd:set(elwdn(x))
+      for j=1,n do xd[j] = x[j] end
       xd[i] = xd[i] + dn(0, 1)
       local vd = dn(f(xd))
       val = vd:val()
@@ -244,6 +319,7 @@ local function valgradf(f, n)
 end
 
 return {
-  dn       = dn,
-  valgradf = valgradf,
+  dn          = dn,
+  derivativef = derivativef,
+  gradientf   = gradientf,
 }
