@@ -9,6 +9,12 @@
 -- license: full text in file LICENSE.TXT in the library's root folder.
 --------------------------------------------------------------------------------
 
+local function tofmin(optim)
+  return function(...)
+    return optim(1, ...)
+  end
+end
+
 return {
-  de = require("sci.fmin._de").fmin,
+  de = tofmin(require("sci.fmin._de").optim),
 }
