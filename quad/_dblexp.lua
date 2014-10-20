@@ -16,12 +16,14 @@
 -- TODO: Use FFI arrays for abscissas and weights to improve performance.
 -- TODO: Move change of variables code in separate module for re-use.
 
-local data = require "sci.quad._dblexp_precomputed"
+local data  = require "sci.quad._dblexp_precomputed"
+local gmath = require "sci.math".generic
 
 local abscissas = data.abscissas
 local weigths   = data.weigths
 
-local pi, cos, tan, abs = math.pi, math.cos, math.tan, math.abs
+local pi, cos, tan = math.pi, math.cos, math.tan
+local abs = gmath.abs
 
 -- Change of variables to bounded interval -------------------------------------
 -- Finite case: x in (a, b) -> y in (u, v):
@@ -84,8 +86,11 @@ end
 
 -- Integration on interval (-1, 1).
 local dblexp = function(f, a, b, abserror)
-  if a >= b then
-    error("a < b is required, a is "..a..", b is "..b)
+  if a > b then
+    error("a <= b is required, a is "..tostring(a)..", b is "..tostring(b))
+  end
+  if a == b then
+    return 0
   end
   abserror = abserror or 1e-6
   local absdelta = 0
