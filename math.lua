@@ -319,7 +319,7 @@ local generic = {
 
 --------------------------------------------------------------------------------
 
-local M = xsys.table.merge(math, {
+local M = xsys.table.union(math, {
   generic     = generic,  
   round       = round,
   step        = step,
