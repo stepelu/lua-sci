@@ -256,11 +256,12 @@ local f, dn = f, dn
 | end
 | args = concat(args, ",")
 return function(${args})
-| local dargs = args
+| local dargs = args..","
 | for i=1,#dxi do
 |   local dx = dxi[i]
-|   dargs = dargs:gsub("x"..dx, "dn(x"..dx..",0)")
+|   dargs = dargs:gsub("x"..dx..",", "dn(x"..dx..",0),")
 | end
+| dargs = dargs:gsub(",$", "")
 | local retadj = { } 
 | for i=1,#dxi do
 | local from, to = "dn%(x"..dxi[i]..",0%)", "dn%(x"..dxi[i]..",1%)"
