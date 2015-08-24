@@ -29,7 +29,6 @@ The most standard and basic and the more simple and permanent it should be
 
 -- TODO: Add removable tests for assumptions in low-level functions like 
 -- TODO: *_memcpy, checks on type agreement, size agreement, bound checks.
--- TODO: row, col, sub, diag for matrix.
 
 local ffi  = require "ffi"
 local bit  = require "bit"
@@ -71,6 +70,10 @@ end
 
 local function vec_memcpy_offset(y, x, o)
   copy(y._p, x._p + o, sizeof(y:elct())*y._n)
+end
+
+local function vec_memcpy_offset_stride(y, x, o, s)
+  for i=0,y._n-1 do y._p[i] = x._p[o + i*s] end
 end
 
 local function vec_set(y, x)
@@ -350,6 +353,41 @@ local function new_mat_ct(elct, elnew, stack)
       local v = mat_alloc(self, self._n, self._m)
       mat_memcpy(v, self)
       return v
+    end,
+    row = function(self, r)
+      if not(1 <= r and r <= self._n) then 
+        error("out of range row: r="..r..", nrow="..self._n) 
+      end
+      local v = vec_alloc(self, self._m)
+      vec_memcpy_offset(v, self, (r - 1)*self._m)
+      return v
+    end,
+    col = function(self, c)
+      if not(1 <= c and c <= self._m) then 
+        error("out of range col: c="..r..", ncol="..self._m) 
+      end
+      local v = vec_alloc(self, self._n)
+      vec_memcpy_offset_stride(v, self, c - 1, self._m)
+      return v
+    end,
+    diag = function(self, d)
+      d = d or 0
+      if self._n ~= self._m then
+        error("matrix is not diagonal")
+      end
+      if not (1 - self._n <= d and d <= self._n - 1) then
+        error("out of range diagonal: d="..d..", n="..self._n)
+      end
+      if d >= 0 then
+        local v = vec_alloc(self, self._n - d)
+        vec_memcpy_offset_stride(v, self, d, self._n + 1)
+        return v
+      else
+        local pd = -d
+        local v = vec_alloc(self, self._n - pd)
+        vec_memcpy_offset_stride(v, self, pd*self._n, self._n + 1)
+        return v
+      end
     end,
     clear = function(self)
       fill(self._p, sizeof(self:elct())*self._n*self._m)
