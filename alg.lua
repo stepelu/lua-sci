@@ -78,7 +78,7 @@ end
 
 local function vec_set(y, x)
   if x:elct() == y:elct() then
-    vec_memcyp(y, x)
+    vec_memcpy(y, x)
   else
     local elnew = y:elnew()
     if elnew then
