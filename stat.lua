@@ -101,6 +101,12 @@ local function len(self)
   return self._n
 end
 
+local function tos_mean(self)
+  local m = vec(self._d)
+  self:mean(m)
+  return "mean:\n"..m:width()
+end
+
 local meand_mt = {
   dim = dim,
   len = len,
@@ -120,6 +126,7 @@ local meand_mt = {
     end
     for i=1,d do mean[i] = self._mu[i] end
   end,
+  __tostring = tos_mean,
 }
 meand_mt.__index = meand_mt
 
@@ -137,6 +144,7 @@ local mean0_mt = {
   mean = function(self)
     return self._mu
   end,
+  __tostring = tos_mean,
 }
 mean0_mt.__index = mean0_mt
 
@@ -144,6 +152,12 @@ local meand_ct = typeof("struct { int32_t _d, _n; $& _mu; }", vec)
 local mean0_ct = typeof("struct { int32_t _d, _n; double _mu; }")
 meand_ct = metatype(meand_ct, meand_mt)
 mean0_ct = metatype(mean0_ct, mean0_mt)
+
+local function tos_var(self)
+  local v = mat(self._d, self._d)
+  self:var(v)
+  return tos_mean(self).."\nvar:\n"..v:width()
+end
 
 local vard_mt = {
   dim = dim,
@@ -171,6 +185,7 @@ local vard_mt = {
     end
     for i=1,d do var[i] = self._s2[i]/(self._n - 1) end
   end,
+  __tostring = tos_var,
 }
 vard_mt.__index = vard_mt
 
@@ -196,6 +211,7 @@ local var0_mt = {
     end
     return self._s2/(self._n - 1)
   end,
+  __tostring = tos_var,
 }
 var0_mt.__index = var0_mt
 
@@ -216,6 +232,13 @@ local function covtocor(X, Y)
     end
   end
   for i=1,n do Y[i][i] = 1 end
+end
+
+local function tos_cor(self)
+  local c, r = mat(self._d, self._d), mat(self._d, self._d)
+  self:cov(c)
+  self:cor(r)
+  return tos_mean(self).."\ncov:\n"..c:width().."\ncor:\n"..r:width()
 end
 
 local covd_mt = {
@@ -258,7 +281,8 @@ local covd_mt = {
   cor = function(self, cor)
     self:cov(cor)
     covtocor(cor, cor)
-  end
+  end,
+  __tostring = tos_cor,
 }
 covd_mt.__index = covd_mt
 
