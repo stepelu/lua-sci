@@ -16,5 +16,6 @@ local function tofmax(optim)
 end
 
 return {
-  de = tofmax(require("sci.fmin._de").optim),
+  de    = tofmax(require("sci.fmin._de").optim),
+  lbfgs = tofmax(require("sci.fmin._lbfgs").optim),
 }
