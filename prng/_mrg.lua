@@ -25,6 +25,7 @@ local a23   = -1370589
 local m2    = 2^32 - 22853
 local scale = 1/(m1 + 1)
 local y0    = 12345
+local MAX_PERIOD_LOG2 = 191
 
 local ull = ffi.typeof("uint64_t")
 
@@ -64,7 +65,7 @@ do
   A2[1][1] = ull(a21 % m2); A2[1][3] = ull(a23 % m2)
   A2[2][1] = 1ULL
   A2[3][2] = 1ULL
-  for i=1,128 do
+  for i=1,MAX_PERIOD_LOG2 do
     A1 = modmul(A1, A1, m1)
     aheadA1[i] = A1
     A2 = modmul(A2, A2, m2)
@@ -77,7 +78,7 @@ local function sarg(...)
 end
 
 local mrg_mt = {
-  __new = function(ct, self)
+  __new = function(ct, self) -- TODO: Check, either new or copy are broken.
     return ffi.new(ct, y0, y0, y0, y0, y0, y0)
   end,
   __tostring = function(self)
