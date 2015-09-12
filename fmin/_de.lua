@@ -176,16 +176,47 @@ local function updatemin(scale, xmin, fmin, vmin, xnew, fnew, vnew)
   end
 end
 
-local function stop_iter(n)
-  local c = 0 
-  return function()
-    c = c + 1
-    return c >= n
+local function range(x, col)
+  local v = x[1][col]
+  local l, u = v, v
+  for r=2,x:nrow() do
+    v = x[r][col]
+    l = min(l, v)
+    u = max(u, v)
+  end
+  return u - l
+end
+
+-- TODO: Maybe a joint absolute and relative stopping criteria?
+local function stop_x_range_no_violation(xrange)
+  xrange = xrange or 1e-4
+  if not (xrange > 0) then
+    error('strictly positive maximum x-range is required, is: '..xrange)
+  end
+  return function(_, _, vmin, xval, _, _)
+    if vmin > 0 then
+      return false
+    end
+    local v = 0
+    for c=1,xval:ncol() do
+      v = max(v, range(xval, c))
+    end
+    return v < xrange
   end
 end
 
-local function no_violation(x)
-  return 0
+local function linear_lt(l, u)
+  return max(0, l - u)
+end
+
+local function hyper_cube_constrain(xl, xu)
+  return function(x, lt)
+    local v = 0
+    for i=1,#x do
+      v = v + lt(xl[i], x[i]) + lt(x[i], xu[i])
+    end
+    return v
+  end
 end
 
 local function rows_as_vec(x)
@@ -200,19 +231,15 @@ local function rows_as_vec(x)
 end
 
 local function optim(scale, f, o)
-  local violation = o.violation or no_violation
-  local rng       = o.rng       or prng.std()
-  local bound     = o.bound     or "reflect"
+  local rng = o.rng or prng.std()
 
   local stop = o.stop
-  if type(stop) == "number" then
-    if stop < 1 then
-      error("number of required iterations must be strictly positive")
-    end
-    stop = stop_iter(stop)
+  if type(stop) == 'nil' or type(stop) == "number" then
+    stop = stop_x_range_no_violation(stop)
   end
   
-  local xl, xu = o.xl, o.xu
+  local constraint = o.constraint
+  local xl, xu = o.xl and o.xl:copy(), o.xu and o.xu:copy()
   if xl then
     if #xl ~= #xu then
       error("xl and xu must have the same size")
@@ -222,6 +249,10 @@ local function optim(scale, f, o)
         error("xl < xu required")
       end
     end
+    constraint = constraint or hyper_cube_constrain(xl, xu)
+  end
+  if not constraint then
+    error('constraint must be provided if xl and xu are not provided')
   end
 
   local NP, dim, xval, x -- Current population.
@@ -249,7 +280,7 @@ local function optim(scale, f, o)
   local fval, vval = alg.vec(NP), alg.vec(NP)
   local xmin, fmin, vmin = nil, 1/0, 1/0
   for j=1,NP do
-    vval[j] = violation(x[j])
+    vval[j] = constraint(x[j], linear_lt)
     fval[j] = vval[j] == 0 and f(x[j]) or 0/0
     xmin, fmin, vmin = updatemin(scale, xmin, fmin, vmin, x[j], fval[j], 
       vval[j])
@@ -310,25 +341,12 @@ local function optim(scale, f, o)
       for i=1,dim do 
         u[j][i] = rz[j][i]*v[i] + (1 - rz[j][i])*x[j][i] 
       end
-      -- Apply the bounds:
-      for i=1,dim do
-        if bound == "reflect" then        
-          local b = max(min(u[j][i], xu[i]), xl[i])
-          -- Value of b must be xl if x < xl, xu if x > xu and x otherwise.
-          u[j][i] = 2*b - u[j][i]
-        elseif bound == "absorb" then
-          u[j][i] = max(xl[i], min(u[j][i], xu[i]))
-        elseif bound == "no" then
-          local _;
-        else
-          error("bound option '"..bound.."' not recognized")
-        end
-      end        
+      -- No hyper-cube style bounds are applied.     
     end    
     -- Selection:
     for j=1,NP do
       local s = rs[j]
-      local vuj = violation(u[j])
+      local vuj = constraint(u[j], linear_lt)
       local fuj = vuj == 0 and f(u[j]) or 0/0
       if compare(scale, fuj, vuj, fval[j], vval[j]) then
         -- It's an improvement --> select.
