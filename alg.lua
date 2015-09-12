@@ -364,7 +364,7 @@ local function new_mat_ct(elct, elnew, stack)
     end,
     col = function(self, c)
       if not(1 <= c and c <= self._m) then 
-        error("out of range col: c="..r..", ncol="..self._m) 
+        error("out of range col: c="..c..", ncol="..self._m) 
       end
       local v = vec_alloc(self, self._n)
       vec_memcpy_offset_stride(v, self, c - 1, self._m)
