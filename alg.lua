@@ -1,812 +1,746 @@
 --------------------------------------------------------------------------------
--- Algebra module.
+-- Matrix and vector algebra module.
 --
 -- Copyright (C) 2011-2014 Stefano Peluchetti. All rights reserved.
 --
 -- Features, documentation and more: http://www.scilua.org .
 --
--- This file is part of the SciLua library, which is released under the MIT
+-- This file is part of the SciLua library, which is released under the MIT 
 -- license: full text in file LICENSE.TXT in the library's root folder.
 --------------------------------------------------------------------------------
 
---[[ Implementation Documentation ----------------------------------------------
+-- TODO: Stack.
+-- TODO: Use only the algorithms in OpenBLAS: support only the supported types.
+-- TODO: Views: sub, row, col, diag
+-- TODO: Custom allocator
+-- TODO: Can bound checks be optimized?
+-- TODO: Can access be optimized (contiguous memory + $** / no shifts) ?
+-- TODO: Can access to BLAS functions be optimized?
+-- TODO: For vectors: r = c = 0 or r = 1, c = n ? (totable then changes)
+-- TODO: Minimize dimension and type checks in BLAS operations.
+-- TODO: Can the request to the stack be optimized (is the pointer sunk?) ?
+-- TODO: Is it faster to check for aliasing with raweq ?
+-- TODO: better dimension reporting.
+-- TODO: Use column vectors: think of matrix vector ,multiplication.
+-- TODO: Just mul() instead of mulmv() and mulmm().
+-- TODO: Consider avoiding type checks via calls like x:_method_element_type().
 
-TODO!
+-- Notes:
+-- + BLAS requires contiguous memory and allows only for aliasing between inputs
+-- + to decide faster way a reasonable number of benchmarks must be available, 
+--   including ones that perform allocations.
 
-CEVEATS:
-elements cannot be VLS/VLA
-elements cannot require manual memory management (i.e pointers)
-When reference semantics (struct) via indexing (due to FFI) and value 
-semantics is desired instead then a elnew function/ctype must be provided;
-notice that this implies immutability of the elements!
+local STACK_PER_ELEMENT_BUFFER = 10e6
+assert(STACK_PER_ELEMENT_BUFFER >= 0)
+local JOIN_UNROLL = 5
+assert(JOIN_UNROLL > 0)
 
-We keep :new() because we want to support users that prefers standard Lua 
+local ffi  = require 'ffi'
+local bit  = require 'bit'
+local xsys = require 'xsys'
 
-PRINCIPLE:
-The most standard and basic and the more simple and permanent it should be
-
-------------------------------------------------------------------------------]]
-
--- TODO: Add removable tests for assumptions in low-level functions like 
--- TODO: *_memcpy, checks on type agreement, size agreement, bound checks.
-
-local ffi  = require "ffi"
-local bit  = require "bit"
-local xsys = require "xsys"
-local blas = require("sci.alg.blas")
-local cfg  = require "sci.alg.cfg"
-
-local new, copy, fill, sizeof, typeof, metatype = xsys.from(ffi,
-     "new, copy, fill, sizeof, typeof, metatype")
-local type, select, tonumber, rawequal = type, select, tonumber, rawequal
-
-local width = xsys.string.width
-local concat = table.concat
-
-local double_ct, complex_ct = typeof("double"), typeof("complex")
-local float_ct = typeof("float")
-
-local floor = math.floor
+local type, setmetatable = type, setmetatable
 local band = bit.band
+local floor = math.floor
 
-local unroll, buffer = cfg.unroll, cfg.buffer
+local template = xsys.template
+local width = xsys.string.width
 
--- Vector ----------------------------------------------------------------------
-local function vec_alloc(ct, n)
-  local v = new(ct, n) -- PERF: Default initialization of VLS, compiled.
-  v._n, v._p = n, v._a
-  return v -- VLS are automatically zero-filled for default initializer case.
+-- Array memory ops ------------------------------------------------------------
+-- Invariant: n == r*c.
+local function array_alloc(ct, n, r, c)
+  local a = ffi.new(ct, n) -- Default initialization of VLS, compiled.
+  a._n, a._r, a._c = n, r, c
+  a._p = a._v
+  return a -- VLS are automatically zero-filled for default initializer case.
 end
 
-local function vec_memmap(ct, n, p)
-  local v = new(ct, 0) -- PERF: Default initialization of VLS, compiled.
-  v._n, v._p = n, p
-  return v
+local function array_map(ct, n, r, c, p)
+  local a = ffi.new(ct, 0) -- Default initialization of VLS, compiled.
+  a._n, a._r, a._c = n, r, c
+  a._p = p
+  return a -- VLS are automatically zero-filled for default initializer case.
 end
 
-local function vec_memcpy(y, x)
-  copy(y._p, x._p, sizeof(y:elct())*y._n)
+local function array_copy_data(dest, source)
+  local source_size = ffi.sizeof(source:elementct())*source._n
+  ffi.copy(dest._p, source._p, source_size)
 end
 
-local function vec_memcpy_offset(y, x, o)
-  copy(y._p, x._p + o, sizeof(y:elct())*y._n)
+local function array_copy_data_offset(dest, source, offset)
+  local source_size = ffi.sizeof(source:elementct())*source._n
+  ffi.copy(dest._p + offset, source._p, source_size)
 end
 
-local function vec_memcpy_offset_stride(y, x, o, s)
-  for i=0,y._n-1 do y._p[i] = x._p[o + i*s] end
-end
-
-local function vec_set(y, x)
-  if x:elct() == y:elct() then
-    vec_memcpy(y, x)
-  else
-    local elnew = y:elnew()
-    if elnew then
-      for i=0,#y-1 do
-        y._p[i] = elnew(x._p[i])
-      end
-    else
-      for i=0,#y-1 do
-        y._p[i] = x._p[i]
-      end      
-    end
-  end
-end
-
--- TODO: Use vec_set (modified to handle offset) when not table.
-local function vec_tab_set(y, x, off, n)
-  for i=1,n do 
-    y[i+off] = x[i]
-  end
-end
-
--- TODO: Specialize over number of arguments.
-local function vec_tovec(ct, ...)
-  local narg = select("#", ...)
-  local a = { ... }
-  local n = 0
-  for i=1,narg do
-    n = n + #a[i]
-  end
-  local v = vec_alloc(ct, n) -- PERF: Default initialization of VLS, compiled.
-  local off = 0
-  for i=1,narg do
-    local ni = #a[i]
-    vec_tab_set(v, a[i], off, ni)
-    off = off + ni
-  end
-  return v
-end
-
-local function new_tovec(vec_ct)
-  return function(...)
-    return vec_tovec(vec_ct, ...)
-  end
-end
-
-local function new_vec_ct(elct, elnew, stack)
-  local vec_mf = {
-    elct = function()
-      return elct
-    end,
-    elnew = function()
-      return elnew
-    end,
-    stack = stack,
-    data = function(self)
-      return self._p
-    end,
-    new = function(self)
-      return vec_alloc(self, self._n)
-    end,
-    copy = function(self)
-      local v = vec_alloc(self, self._n)
-      vec_memcpy(v, self)
-      return v
-    end,
-    sub = function(self, f, l) -- Allows for l == f-1 --> 0-sized array.
-      f = f or 1
-      l = l or self._n
-      if f < 1 or f - 1 > l or l > self._n or f > self._n then
-        error("out of bounds range: f="..f..", l="..l..", #="..self._n)
-      end
-      local v = vec_alloc(self, l - f + 1)
-      vec_memcpy_offset(v, self, f - 1)
-      return v
-    end,
-    clear = function(self)
-      fill(self._p, sizeof(self:elct())*self._n)
-    end,
-    totable = function(self)
-      local o = { }
-      for i=1,self._n do
-        o[i] = self[i]
-      end
-      return o
-    end,
-    width = function(self, chars)
-      local o = { }
-      for i=1,self._n do
-        o[i] = width(self[i], chars)
-      end
-      return concat(o, ",")
-    end,
-  }
-  local vec_mt = {
-    __new = function(ct, n)
-      if not type(n) == "number" then
-        error("size must be a number")
-      end
-      if not (n >= 0) then
-        error("size must be non-negative, size="..n)
-      end
-      return vec_alloc(ct, n)
-    end,
-    __len = function(self)
-      return self._n
-    end,
-    __index = elnew and function(self, k)
-      if type(k) == "number" then
-        if not (1 <= k and k <= self._n) then
-          error("out of bounds index: i="..k..", #="..self._n)
-        end
-        return elnew(self._p[k-1]) -- To have value semantics.
-      else    
-        return vec_mf[k]
-      end
-    end or function(self, k)
-      if type(k) == "number" then
-        if not (1 <= k and k <= self._n) then
-          error("out of bounds index: i="..k..", #="..self._n)
-        end
-        return self._p[k-1]
-      else    
-        return vec_mf[k]
-      end
-    end,
-    __newindex = elnew and function(self, i, v)
-      if not (1 <= i and i <= self._n) then
-        error("out of bounds index: i="..i..", #="..self._n)
-      end
-      self._p[i-1] = elnew(v) -- For conversions.
-    end or function(self, i, v)
-      if not (1 <= i and i <= self._n) then
-        error("out of bounds index: i="..i..", #="..self._n)
-      end
-      self._p[i-1] = v 
-    end,
-    __tostring = function(self)
-      local o = { }
-      for i=1,self._n do
-        o[i] = tostring(self[i])
-      end
-      return "{"..concat(o, ",").."}"
-    end,
-  }
-  local ct = typeof("struct { int32_t _n; $* _p; $ _a[?]; }", elct, elct)
-  return metatype(ct, vec_mt)
-end
-
--- Matrix ----------------------------------------------------------------------
-local function mat_alloc(ct, n, m)
-  local v = new(ct, n*m) -- PERF: Default initialization of VLS, compiled.
-  v._n, v._m, v._p = n, m, v._a
-  return v
-end
-
-local function mat_memmap(ct, n, m, p)
-  local v = new(ct, 0) -- PERF: Default initialization of VLS, compiled.
-  v._n, v._m, v._p = n, m, p
-  return v
-end
-
-local function mat_memcpy(y, x)
-  copy(y._p, x._p, sizeof(y:elct())*y._n*y._m)
-end
-
-local function mat_set(y, x)
-  if x:elct() == y:elct() then
-    mat_memcpy(y, x)
-  else
-    local elnew, n = y:elnew(), y._n*y._m
-    if elnew then
-      for i=0,n-1 do
-        y._p[i] = elnew(x._p[i])
-      end
-    else
-      for i=0,n-1 do
-        y._p[i] = x._p[i]
-      end      
-    end
-  end
-end
-
-local function mat_tab_dim(x)
-  if type(x) == "table" then
-    return #x, #x[1]
-  else
-    return x:nrow(), x:ncol()
-  end
-end
-
--- TODO: Use mat_set (modified to handle offset) when not table.
-local function mat_tab_set(y, x, off, n, m)
-  for r=1,n do for c=1,m do
-    y[r+off][c] = x[r][c]
-  end end
-end
-
--- TODO: Specialize over number of arguments.
-local function mat_aggregate(ct, ...)
-  local narg = select("#", ...)
-  local a = { ... }
-  local n, m = 0
-  for i=1,narg do
-    local ni, mi = mat_tab_dim(a[i])
-    if m and (mi ~= m) then
-      error("all arguments must have the same number of columns")
-    end
-    n, m = n + ni, mi
-  end
-  local v = mat_alloc(ct, n, m) -- PERF: Default initialization of VLS, compiled.
-  local off = 0
-  for i=1,narg do
-    local ni = mat_tab_dim(a[i])
-    mat_tab_set(v, a[i], off, ni, m)
-    off = off + ni
-  end
-  return v
-end
-
-local function new_tomat(mat_ct)
-  return function(...)
-    return mat_aggregate(mat_ct, ...)
-  end
-end
-
--- Do not call directly, called by new_mat_ct already:
-local function new_row_ct(elct, elnew)
-  local row_mt = {
-    __index = elnew and function(self, i)
-      if not (1 <= i and i <= self._m) then
-        error("out of bounds col index: col="..i..", #col="..self._m)
-      end
-      return elnew(self._p[i-1]) -- To have value semantics.
-    end or function(self, i)
-      if not (1 <= i and i <= self._m) then
-        error("out of bounds col index: col="..i..", #col="..self._m)
-      end
-      return self._p[i-1]
-    end,
-    __newindex = elnew and function(self, i, v)
-      if not (1 <= i and i <= self._m) then
-        error("out of bounds col index: col="..i..", #col="..self._m)
-      end
-      self._p[i-1] = elnew(v) -- For conversions.
-    end or function(self, i, v)
-      if not (1 <= i and i <= self._m) then
-        error("out of bounds col index: col="..i..", #col="..self._m)
-      end
-      self._p[i-1] = v
-    end,
-  }
-  return metatype(typeof("struct { int32_t _m; $* _p; }", elct), row_mt)
-end
-
-local function new_mat_ct(elct, elnew, stack)
-  local row_ct = new_row_ct(elct, elnew)
-  local mat_mf = {
-    elct = function()
-      return elct
-    end,
-    elnew = function()
-      return elnew
-    end,
-    stack = stack,
-    data = function(self)
-      return self._p
-    end,
-    new = function(self)
-      return mat_alloc(self, self._n, self._m)
-    end,
-    copy = function(self)
-      local v = mat_alloc(self, self._n, self._m)
-      mat_memcpy(v, self)
-      return v
-    end,
-    row = function(self, r)
-      if not(1 <= r and r <= self._n) then 
-        error("out of range row: r="..r..", nrow="..self._n) 
-      end
-      local v = vec_alloc(self, self._m)
-      vec_memcpy_offset(v, self, (r - 1)*self._m)
-      return v
-    end,
-    col = function(self, c)
-      if not(1 <= c and c <= self._m) then 
-        error("out of range col: c="..c..", ncol="..self._m) 
-      end
-      local v = vec_alloc(self, self._n)
-      vec_memcpy_offset_stride(v, self, c - 1, self._m)
-      return v
-    end,
-    diag = function(self, d)
-      d = d or 0
-      if self._n ~= self._m then
-        error("matrix is not diagonal")
-      end
-      if not (1 - self._n <= d and d <= self._n - 1) then
-        error("out of range diagonal: d="..d..", n="..self._n)
-      end
-      if d >= 0 then
-        local v = vec_alloc(self, self._n - d)
-        vec_memcpy_offset_stride(v, self, d, self._n + 1)
-        return v
-      else
-        local pd = -d
-        local v = vec_alloc(self, self._n - pd)
-        vec_memcpy_offset_stride(v, self, pd*self._n, self._n + 1)
-        return v
-      end
-    end,
-    clear = function(self)
-      fill(self._p, sizeof(self:elct())*self._n*self._m)
-    end,
-    nrow = function(self)
-      return self._n
-    end,
-    ncol = function(self)
-      return self._m
-    end,
-    totable = function(self)
-      local o = { }
-      for i=1,self._n do
-        local oo = { }
-        for j=1,self._m do
-          oo[j] = self[i][j]
-        end
-        o[i] = oo
-      end
-      return o
-    end,
-    width = function(self, chars)
-      local o = { }
-      for i=1,self._n do
-        local oo = { }
-        for j=1,self._m do
-          oo[j] = width(self[i][j], chars)
-        end
-        o[i] = concat(oo, ",")
-      end
-      return concat(o, "\n")
-    end,
-  }
-  local mat_mt = {
-    __new = function(ct, n, m)
-      if not (type(n) == "number" and type(m) == "number") then
-        error("sizes must be numbers")
-      end
-      if not (n >= 0 and m >= 0) then
-        error("size must be non-negative, size="..n.."x"..m)
-      end
-      return mat_alloc(ct, n, m)
-    end,
-    __index = function(self, k)
-      if type(k) == "number" then
-        if not (1 <= k and k <= self._n) then
-          error("out of bounds row index: row="..k..", #row="..self._n)
-        end
-        return row_ct(self._m, self._p + (k-1)*self._m)
-      else    
-        return mat_mf[k]
-      end
-    end,
-    __tostring = function(self)
-      local o = { }
-      for i=1,self._n do
-        local oo = { }
-        for j=1,self._m do
-          oo[j] = tostring(self[i][j])
-        end
-        o[i] = "{"..concat(oo, ",").."}"
-      end
-      return "{"..concat(o, ",").."}"
-    end,
-  }
-  local ct = typeof("struct { int32_t _n, _m; $* _p; $ _a[?]; }", elct, elct)
-  return metatype(ct, mat_mt)
+local function array_clear(x)
+  local x_size = ffi.sizeof(x:elementct())*x._n
+  ffi.fill(x._p, x_size)
 end
 
 -- Stack -----------------------------------------------------------------------
--- TODO: Consider having a growth-able stack limited by _max, the growth would
--- TODO: be triggered in clear (to avoid invalidating *_map objects) starting 
--- TODO: from a minimum value (configurable as well) and doubling each time up
--- TODO: to _max.
-local function stack_data(stack, n)
-  stack._n = stack._n + n
-  return stack._p + (stack._n - n)
+-- TODO: Use malloc.
+-- TODO: Allow growth.
+
+local stack_struct = 'struct { int32_t _max, _n; $ _p[?]; }'
+
+local function mem_stack_data(self, n)
+  self._n = self._n + n
+  return self._p + (self._n - n)
 end
 
-local function new_stack_ct(elct, size, vec_ct, mat_ct)
-  local ct = typeof("struct { int32_t _max, _n; $ _p[?]; }", elct)
-  local stack = ct(size, size)
+local function new_mem_stack_ct(element_ct)
   local stack_mt = {
-    clear = function()
-      stack._n = 0
+    __new = function(ct, maxsize)
+      local o = ffi.new(ct, maxsize)
+      o._max = maxsize
+      return o
     end,
-    vec = function(n)
-      if stack._n + n <= stack._max then
-        return vec_memmap(vec_ct, n, stack_data(stack, n))
-      else
-        return vec_alloc(vec_ct, n)
-      end
+    clear = function(self)
+      array_clear(self)
+      self._n = 0
     end,
-    mat = function(n, m)
-      if stack._n + n*m <= stack._max then
-        return mat_memmap(mat_ct, n, m, stack_data(stack, n*m))
-      else
-        return mat_alloc(mat_ct, n, m)
-      end
+    request = function(self, n)
+      return self._n + n <= self._max and mem_stack_data(self, n)
+    end,
+    elementct = function()
+      return element_ct
     end,
   }
-  stack_mt.__index = stack_mt  
-  return metatype("struct { }", stack_mt)
+  stack_mt.__index = stack_mt 
+
+  local stack_ct = ffi.typeof(stack_struct, element_ct) 
+  return ffi.metatype(stack_ct, stack_mt)
 end
 
--- Algorithms ------------------------------------------------------------------
--- In all algorithms a prefix _ means that it's the private version:
--- + no dimension checks
--- + not alias safe
--- + they are guaranteed not to obtain new stack or call stack.clear(), 
---   hence they are passed a stack when necessary
--- + they are guaranteed not to throw an error, but can return nil, err
+-- BLAS ------------------------------------------------------------------------
+local blas_element_code = template([[
+local ffi     = require 'ffi'
+local cblas_h = require 'sci._cblas_h'
 
--- We also try to avoid using math functions, just operators. This way the 
--- algorithms are compatible with types different from double.
+ffi.cdef(cblas_h)
+local blas = ffi.load('libopenblas')
 
--- Multiply --------------------------------------------------------------------
-local function chk_eq_square(X, Y)
-  local n, m = X:nrow(), X:ncol()
-  local ny, my = Y:nrow(), Y:ncol()
-  if not (n == m and n == ny and n == my) then
-    error("arguments must be square matrices of equal size")
+local complex_a1 = ffi.typeof('complex[1]')
+local compflo_a1 = ffi.typeof('complex float[1]')
+
+local compfloa, compflob = compflo_a1(), compflo_a1()
+local complexa, complexb = complex_a1(), complex_a1()
+
+return {
+| for ELEMENT_NAME, BLAS in pairs{
+|   float             = { PREFIX = 's' },
+|   double            = { PREFIX = 'd' },
+|   ['complex float'] = { PREFIX = 'c', ALPHA = 'compfloa', BETA = 'compflob' },
+|   complex           = { PREFIX = 'z', ALPHA = 'complexa', BETA = 'complexb' },
+| } do
+  [tonumber(ffi.typeof('${ELEMENT_NAME}'))] = {
+    gemm = function(C, A, B, At, Bt, alpha, beta)
+      ${BLAS.ALPHA and BLAS.ALPHA..'[0] = alpha'}
+      ${BLAS.BETA and BLAS.BETA..'[0] = beta'}
+      blas.cblas_${BLAS.PREFIX}gemm(
+        blas.CblasRowMajor, 
+        At and blas.CblasTrans or blas.CblasNoTrans, 
+        Bt and blas.CblasTrans or blas.CblasNoTrans, 
+        C:nrow(), 
+        C:ncol(), 
+        At and A:nrow() or A:ncol(), 
+        ${BLAS.ALPHA and BLAS.ALPHA or 'alpha'},
+        A:data(), 
+        A:ncol(), 
+        B:data(), 
+        B:ncol(), 
+        ${BLAS.BETA and BLAS.BETA or 'beta'},
+        C:data(), 
+        C:ncol()
+      )
+    end,
+    gemv = function(y, A, x, At, alpha, beta)
+      ${BLAS.ALPHA and BLAS.ALPHA..'[0] = alpha'}
+      ${BLAS.BETA and BLAS.BETA..'[0] = beta'}
+      blas.cblas_${BLAS.PREFIX}gemv(
+        blas.CblasRowMajor, 
+        At and blas.CblasTrans or blas.CblasNoTrans, 
+        A:nrow(), 
+        A:ncol(),
+        ${BLAS.ALPHA and BLAS.ALPHA or 'alpha'},
+        A:data(), 
+        A:ncol(),
+        x:data(), 
+        1,
+        ${BLAS.BETA and BLAS.BETA or 'beta'},
+        y:data(),
+        1
+      )
+    end,
+  },
+| end
+}
+]])()
+
+local blas_element_ct = assert(loadstring(blas_element_code))()
+
+local function same_type_2_check(x, y)
+  if x:elementct() ~= y:elementct() then
+    error('constant element type required')
   end
-  return n, m
 end
 
--- Generic version when no BLAS or unsupported element type, loop ordering is
--- more cache-friendly than intuitive version.
-local function _mulmm_generic(C, A, B, transA, transB)
-  local M, N, K = C:nrow(), C:ncol(), not transA and A:ncol() or A:nrow()
-  C:clear()
-  if not transA and not transB then
-    for k=1,K do for i=1,M do for j=1,N do
-      C[i][j] = C[i][j] + A[i][k]*B[k][j]
-    end end end
-  elseif transA and not transB then
-    for k=1,K do for i=1,M do for j=1,N do
-      C[i][j] = C[i][j] + A[k][i]*B[k][j]
-    end end end
-  elseif not transA and transB then
-    for k=1,K do for i=1,M do for j=1,N do
-      C[i][j] = C[i][j] + A[i][k]*B[j][k]
-    end end end
-  elseif transA and transB then
-    for k=1,K do for i=1,M do for j=1,N do
-      C[i][j] = C[i][j] + A[k][i]*B[j][k]
-    end end end
+local function same_type_3_check(x, y, z)
+  local ct = x:elementct()
+  if ct ~= y:elementct() or ct ~= z:elementct() then
+    error('constant element type required')
   end
 end
 
-local function _mulmv_generic(y, A, x, transA)
-  local M, N = #y, not transA and A:ncol() or A:nrow()
-  for i=1,M do y[i] = 0 end
-  if not transA then
-    for i=1,M do for j=1,N do
-      y[i] = y[i] + A[i][j]*x[j]
-    end end
+local function dimensions_mat(A, At)
+  local Ar, Ac = A:nrow(), A:ncol()
+  if At then
+    Ar, Ac = Ac, Ar
+  end
+  return Ar, Ac
+end
+
+local function dimensions_mul_check(A, B, At, Bt)
+  local Ar, Ac = dimensions_mat(A, At)
+  local Br, Bc = dimensions_mat(B, Bt)
+  if Ac ~= Br then
+    error("incompatible dimensions in matrix-matrix multiplication")
+  end
+  return Ar, Bc
+end
+
+local function dimensions_mat_same_check(A, At, nrow, ncol)
+  local Ar, Ac = dimensions_mat(A, At)
+  if Ar ~= nrow or Ac ~= ncol then
+    error('unexpected matrix dimensions')
+  end
+end
+
+local function dimensions_mat_square_check(A)
+  if A:nrow() ~= A:ncol() then
+    error('square matrix expected')
+  end
+end
+
+local function mul(C, A, B, At, Bt)
+  same_type_3_check(C, A, B)
+  local Cr, Cc = dimensions_mul_check(A, B, At, Bt)
+  dimensions_mat_same_check(C, false, Cr, Cc)
+  local T = C:_stack_array(Cr*Cc, Cr, Cc)
+  if Cc == 1 then
+    T:_gemv(A, B, At, 1, 0)
   else
-    for j=1,N do for i=1,M do
-      y[i] = y[i] + A[j][i]*x[j]
-    end end   
+    T:_gemm(A, B, At, Bt, 1, 0)
   end
+  array_copy_data(C, T)
+  C:_stack_clear()
 end
-
-local function iseltype2(ct, x, y)
-  return x:elct() == ct and y:elct() == ct
-end
-
-local function _mulmm_blas(C, A, B, transA, transB)
-  if iseltype2(double_ct, A, B) then
-    blas.dgemm(C, A, B, transA, transB)
-  elseif iseltype2(complex_ct, A, B) then
-    blas.zgemm(C, A, B, transA, transB)
-  elseif iseltype2(float_ct, A, B) then
-    blas.sgemm(C, A, B, transA, transB)
-  else
-    _mulmm_generic(C, A, B, transA, transB)
-  end
-end
-
-local function _mulmv_blas(y, A, x, transA)
-  if iseltype2(double_ct, A, x) then
-    blas.dgemv(y, A, x, transA)
-  elseif iseltype2(complex_ct, A, x) then
-    blas.zgemv(y, A, x, transA)
-  elseif iseltype2(float_ct, A, x) then
-    blas.sgemv(y, A, x, transA)
-  else
-    _mulmv_generic(y, A, x, transA)
-  end
-end
-
-local _mulmm = blas and _mulmm_blas or _mulmm_generic
-local _mulmv = blas and _mulmv_blas or _mulmv_generic
 
 -- Exponentiation by squaring algorithm:
-local function _rec_powms(A, s, n, stack)
-  local T = stack.mat(n, n) -- Cannot alias A.
+local function pow_recursive(A, s, n)
+  local T = A:_stack_array(n*n, n, n)
   if s == 1 then
-    -- Cannot return A because could generate aliasing between R and T below:
-    mat_memcpy(T, A)
+    -- Cannot return A because could generate aliasing between R and T below.
+    array_copy_data(T, A)
     return T
   elseif s == 2 then
-    _mulmm(T, A, A)
+    T:_gemm(A, A, false, false, 1, 0)
     return T
   elseif band(s, 1) == 0 then -- Even.
-    _mulmm(T, A, A)
-    return _rec_powms(T, s/2, n, stack)
+    T:_gemm(A, A, false, false, 1, 0)
+    return pow_recursive(T, s/2, n)
   else
-    _mulmm(T, A, A)
-    local R = _rec_powms(T, (s - 1)/2, n, stack) -- R cannot alias T.
-    _mulmm(T, R, A)
+    T:_gemm(A, A, false, false, 1, 0)
+    local R = pow_recursive(T, (s - 1)/2, n) -- R cannot alias T.
+    T:_gemm(R, A, false, false, 1, 0)
     return T
+  end
+end
+
+local function pow_dispatch(B, A, s)
+  local n = B:nrow()
+  if s == 0 then
+    array_clear(B)
+    for i=1,n do B[{i,i}] = 1 end
+  elseif s == 1 then
+    array_copy_data(B, A)
+  else
+    local T = pow_recursive(A, s, n)
+    array_copy_data(B, T)
   end
 end
 
 -- TODO: Use SVD decomposition for large s and allow positive real s.
-local function _powms(B, A, s, stack)
-  local n = B:nrow()
-  if s == 0 then
-    B:clear()
-    for i=1,n do B[i][i] = 1 end
-  elseif s == 1 then
-    mat_set(B, A)
-  else
-    local T = _rec_powms(A, s, n, stack)
-    mat_memcpy(B, T)
-  end
-end
-
-local function powms(B, A, s)
-  chk_eq_square(B, A)
+local function pow(B, A, s)
+  same_type_2_check(B, A)
+  dimensions_mat_square_check(B, A)
   if s < 0 or floor(s) ~= s then
-    error("NYI: matrix exponentiation supported only for non-negative integers")
+    error('NYI: matrix exponentiation supported only for nonnegative integers')
   end
-  local stack = B:stack()
-  _powms(B, A, s, stack)
-  stack.clear()
+  pow_dispatch(B, A, s)
+  B:_stack_clear()
 end
 
--- Dimension checks, aliasing safe:
-local function mulmm(C, A, B, transA, transB)
-  local Cn, Cm = C:nrow(), C:ncol()
-  local An, Am = A:nrow(), A:ncol() 
-  if transA then
-    An, Am = Am, An
+-- Join ------------------------------------------------------------------------
+local function rep(what, first, last, sep)
+  sep = sep or ', '
+  local increment = last >= first and 1 or -1
+  local o = { }
+  for i=first,last,increment do
+    o[#o + 1] = what:gsub('@', i)
   end
-  local Bn, Bm = B:nrow(), B:ncol() 
-  if transB then
-    Bn, Bm = Bm, Bn
-  end
-  if Cn ~= An or Cm ~= Bm or Am ~= Bn then
-    error("incompatible dimensions in matrix-matrix multiplication")
-  end
-  if rawequal(C, A) or rawequal(C, B) then
-    local CS = C:stack().mat(Cn, Cm)
-    _mulmm(CS, A, B, transA, transB)
-    mat_memcpy(C, CS)
-    C:stack().clear()
-  else
-    _mulmm(C, A, B, transA, transB)
-  end
+  return table.concat(o, sep)
 end
 
--- Dimension checks, aliasing safe:
-local function mulmv(y, A, x, transA)
-  local An, Am = A:nrow(), A:ncol() 
-  if transA then
-    An, Am = Am, An
-  end
-  if #y ~= An or Am ~= #x then
-    error("incompatible dimensions in matrix-vector multiplication")
-  end
-  if rawequal(y, x) then
-    local ys = y:stack().vec(#y)
-    _mulmv(ys, A, x, transA)
-    vec_memcpy(y, ys)
-    y:stack().clear()
-  else
-    _mulmv(y, A, x, transA)
-  end
-end
+local concat_code = template([[
+local setmetatable = setmetatable
 
--- Factor ----------------------------------------------------------------------
--- Perform a LT Cholesky factorization of PD (positive-definite) matrix A,
--- that is A = L*L:t() in 1/6*n^3 operations.
--- LT has better performance (more cache friendly even if more divisions, more
--- LuaJIT-friendly) then UT version. For the UT version see:
--- "Matrix Inversion Using Cholesky Decomposition", 2011.
--- L *can* alias A (in-place Cholesky), only LT part of L written (alias safe).
--- TODO: add 'kind' option: lt or ut.
-local function _cholesky(L, A)
-  local n = A:nrow()
-  for i=1,n do
-    -- Strictly lower diagonal part.
-    for j=1,i-1 do
-    local sum = 0
-      for k=1,j-1 do
-        sum = sum + L[i][k]*L[j][k]
+local concat_n_mt = {
+  _new = function(self, n, r, c)
+    return self[1]:_new(n, r, c)
+  end,
+  nrow = function(self)
+    return self[1]:nrow()
+  end,
+  ncol = function(self)
+    local nc = 0
+    for i=1,self[0] do
+      nc = nc + self[i]:ncol()
+    end
+    return nc
+  end,
+  elementct = function(self)
+    return self[1]:elementct()
+  end,
+  _concat_dispatch = function(self, lhs)
+    local na = self[0]
+    self[na + 1] = lhs
+    self[0] = na + 1
+    return self
+  end,
+  _copy_into = function(self, out, offset)
+    local na, nr = self[0], self[1]._r
+    for r=1,nr do
+      for a=na,1,-1 do
+        local nc = self[a]._c
+        for c=1,nc do
+          out._p[offset + c - 1] = self[a]._p[(r-1)*nc + c - 1]
+        end
+        offset = offset + nc
       end
-      L[i][j] = (A[i][j] - sum)/L[j][j]
     end
-    -- Diagonal part.
-    local sum = 0
-    for k=1,i-1 do
-      sum = sum + L[i][k]^2
-    end
-    L[i][i] = (A[i][i] - sum)^0.5 -- Works with non-double as well.
-    if L[i][i] ~= L[i][i] then
-      return nil, "input matrix is not positive-definite"
-    end
-  end
-  return true
-end
+    return offset
+  end,
+}
+concat_n_mt.__index = concat_n_mt
 
-local function factor(Y, X, kind)
-  if kind == "posdef" then
-    chk_eq_square(Y, X)
-    local ok, err = _cholesky(Y, X)
-    if not ok 
-      then return nil, err
-    end
-    -- Must fill with 0 the upper triangular part.
-    local n = Y:nrow()
-    for r=1,n do for c=r+1,n do Y[r][c] = 0 end end
-    return true
-  else
-    error("NYI: only factorization of 'posdef' matrices is implemented")
-  end
-end
-
--- Invert ----------------------------------------------------------------------
--- Only LT parts of X and Y are used, Y *must not* alias X.
-local function _invltmat(Y, X)
-  local n = X:nrow()
-  for i=1,n do
-    Y[i][i] = 1/X[i][i]
-  end
-  for r=2,n do
-    for c=1,r-1 do
-      local sum = 0
-      for k=1,r-1 do
-        sum = sum + X[r][k]*Y[k][c]
+| for N=JOIN_UNROLL,2,-1 do
+local concat_${N}_mt = {
+  _new = function(self, n, r, c)
+    return self[1]:_new(n, r, c)
+  end,
+  nrow = function(self)
+    return self[1]:nrow()
+  end,
+  ncol = function(self)
+    return ${R('self[@]:ncol()', 1, N, ' + ')}
+  end,
+  elementct = function(self)
+    return self[1]:elementct()
+  end,
+  _concat_dispatch = function(self, lhs)
+| if N == JOIN_UNROLL then
+    self[0] = ${N + 1}
+    return setmetatable({ ${R('self[@]', 1, N)}, lhs }, concat_n_mt)
+| else
+    return setmetatable({ ${R('self[@]', 1, N)}, lhs }, concat_${N + 1}_mt)
+| end
+  end,
+  _copy_into = function(self, out, offset)
+    for r=1,self[1]:nrow() do
+| for I=N,1,-1 do
+      local nc = self[${I}]._c
+      for c=1,nc do
+        out._p[offset + c - 1] = self[${I}]._p[(r-1)*nc + c - 1]
       end
-      Y[r][c] = -sum/X[r][r] 
+      offset = offset + nc
+| end
     end
-  end
-  return true
+    return offset
+  end,
+}
+concat_${N}_mt.__index = concat_${N}_mt
+
+| end
+return concat_2_mt
+]])({ JOIN_UNROLL = JOIN_UNROLL, R = rep })
+
+local concat_2_mt = assert(loadstring(concat_code))()
+
+local join_code = template([[
+local select = select
+local error = error
+
+local function join_1(x1)
+  local nr, nc = x1:nrow(), x1:ncol()
+  local a = x1:_new(nr*nc, nr, nc)
+  x1:_copy_into(a, 0)
+  return a
 end
 
-local function _invertposdef(Y, X, stack)
-  local ok, err = _cholesky(Y, X)
-  if not ok then 
-    return nil, err
+| for N=2,JOIN_UNROLL do
+local function join_${N}(${R('x@', 1, N)})
+  local nr, nc, ct = x1:nrow(), x1:ncol(), x1:elementct()
+  if ${R('x@:elementct() ~= ct', 2, N, ' or ')} then
+    error('constant element type required')
   end
-  local T = stack.mat(X:nrow(), X:ncol())
-  T:clear()
-  _invltmat(T, Y)
-  _mulmm(Y, T, T, true)
-  return true
+  if ${R('x@:ncol() ~= nc', 2, N, ' or ')} then
+    error('constant number of columns required')
+  end
+  nr = nr + ${R('x@:nrow()', 2, N, ' + ')}
+  local a = x1:_new(nr*nc, nr, nc)
+  local offset = 0
+| for I=1,N do
+  offset = x${I}:_copy_into(a, offset)
+| end
+  return a
 end
 
-local function invert(Y, X, kind)
-  chk_eq_square(Y, X)
-  if kind == "posdef" then
-    local stack = Y:stack()
-    local ok, err = _invertposdef(Y, X, stack)
-    stack.clear()
-    if ok then
-      return true
-    else
-      return nil, err
+| end
+local function join_n(n, ...)
+  local arg = { ... }
+  local nr, nc, ct = arg[1]:nrow(), arg[1]:ncol(), arg[1]:elementct()
+  for i=2,n do
+    if arg[i]:elementct() ~= ct then
+      error('constant element type required')
     end
+    if arg[i]:ncol() ~= nc then
+      error('constant number of columns required')
+    end
+    nr = nr + arg[i]:nrow()
+  end
+  local a = arg[1]:_new(nr*nc, nr, nc)
+  local offset = 0
+  for i=1,n do
+    offset = arg[i]:_copy_into(a, offset)
+  end
+  return a
+end
+
+return function(...)
+  local n = select('#', ...)
+  if n == 1 then
+    return join_1(...)
+| for I=2,JOIN_UNROLL do
+  elseif n == ${I} then
+    return join_${I}(...)
+| end
   else
-    error("NYI: only inversion of 'posdef' matrices is implemented")
+    return join_n(n, ...)
   end
+end
+]])({ JOIN_UNROLL = JOIN_UNROLL, R = rep })
+
+local join = assert(loadstring(join_code))()
+
+-- Array -----------------------------------------------------------------------
+local array_struct = 'struct { int32_t _n, _r, _c; $* _p; $ _v[?]; }'
+
+local function unsupported_element_ct(self)
+  error('operation not supported for element type '..tostring(self:elementct()))
+end
+
+local function new_array_ct(element_ct, element_copy)
+  local array_mt
+  array_mt = {
+    new = function(self)
+      return array_alloc(self, self._n, self._r, self._c)
+    end,
+    copy = function(self)
+      local a = self:new()
+      array_copy_data(a, self)
+      return a
+    end,
+    _new = function(self, n, r, c)
+      return array_alloc(self, n, r, c)
+    end,
+    _copy_into = function(self, out, offset)
+      array_copy_data_offset(out, self, offset)
+      return offset + self._n
+    end,
+    _concat_dispatch = function(self, lhs) -- Concatenating two array_ct.
+      return setmetatable({ [0] = 2, self, lhs }, concat_2_mt)
+    end,
+    __concat = function(lhs, rhs)
+      if lhs:nrow() ~= rhs:nrow() then
+        error('constant number of rows required')
+      end
+      same_type_2_check(lhs, rhs)
+      return rhs:_concat_dispatch(lhs)
+    end,
+    sub = function(self, f, l)
+      if f < 1 or f - 1 > l or l > self._n then
+        error('out of bounds first: '..f..', last: '..l..', length: '..self._n)
+      end
+      if self._n ~= 0 and self._c ~= 1 then
+        error('single-column array required')
+      end
+      local a = array_alloc(self, l - f + 1, l - f + 1, 1)
+      array_copy_data_offset(a, self, f - 1)
+      return a
+    end,
+    __len = function(self)
+      return self._n
+    end,
+    nrow = function(self)
+      return self._r
+    end,
+    ncol = function(self)
+      return self._c
+    end,
+    __index = element_copy and function(self, k)
+      if type(k) == 'number' then
+        if k < 1 or k > self._n then
+          error('out of bounds index: '..k..', length: '..self._n)
+        end
+        return element_copy(self._p[k-1])
+      elseif type(k) == 'table' then
+        local r, c = k[1], k[2]
+        if r < 1 or r > self._r then
+          error('out of bounds row: '..r..', number of rows: '..self._r)
+        end
+        if c < 1 or c > self._c then
+          error('out of bounds column: '..c..', number of columns: '..self._c)
+        end
+        return element_copy(self._p[(r-1)*self._c + (c-1)])
+      else    
+        return array_mt[k]
+      end
+    end or function(self, k)
+      if type(k) == 'number' then
+        if k < 1 or k > self._n then
+          error('out of bounds index: '..k..', length: '..self._n)
+        end
+        return self._p[k-1]
+      elseif type(k) == 'table' then
+        local r, c = k[1], k[2]
+        if r < 1 or r > self._r then
+          error('out of bounds row: '..r..', number of rows: '..self._r)
+        end
+        if c < 1 or c > self._c then
+          error('out of bounds column: '..c..', number of columns: '..self._c)
+        end
+        return self._p[(r-1)*self._c + (c-1)]
+      else    
+        return array_mt[k]
+      end
+    end,
+    __newindex = element_copy and function(self, k, v)
+      if type(k) == 'number' then
+        if k < 1 or k > self._n then
+          error('out of bounds index: '..k..', length: '..self._n)
+        end
+        self._p[k-1] =  element_copy(v)
+      elseif type(k) == 'table' then
+        local r, c = k[1], k[2]
+        if r < 1 or r > self._r then
+          error('out of bounds row: '..r..', number of rows: '..self._r)
+        end
+        if c < 1 or c > self._c then
+          error('out of bounds column: '..c..', number of columns: '..self._c)
+        end
+        self._p[(r-1)*self._c + (c-1)] = element_copy(v)
+      end
+    end or function(self, k, v)
+      if type(k) == 'number' then
+        if k < 1 or k > self._n then
+          error('out of bounds index: '..k..', length: '..self._n)
+        end
+        self._p[k-1] = v
+      elseif type(k) == 'table' then
+        local r, c = k[1], k[2]
+        if r < 1 or r > self._r then
+          error('out of bounds row: '..r..', number of rows: '..self._r)
+        end
+        if c < 1 or c > self._c then
+          error('out of bounds column: '..c..', number of columns: '..self._c)
+        end
+        self._p[(r-1)*self._c + (c-1)] = v
+      end
+    end,
+    totable = function(self)
+      local o = { }
+      for i=1,self:nrow() do
+        o[i] = { }
+        for j=1,self:ncol() do
+          o[i][j] = self[{i, j}]
+        end
+      end
+      return o
+    end,
+    __tostring = function(self)
+      local o = { }
+      for i=1,self:nrow() do
+        o[i] = { }
+        for j=1,self:ncol() do
+          o[i][j] = width(self[{i, j}])
+        end
+        o[i] = table.concat(o[i], ",")
+      end
+      return table.concat(o, "\n")
+    end,
+    elementct = function()
+      return element_ct
+    end,
+    data = function(self)
+      return self._p
+    end,
+  }
+
+  local element_ct_id = tonumber(element_ct)
+
+  local blas_algo = blas_element_ct[element_ct_id]
+  if blas_algo then
+    local stack_ct = new_mem_stack_ct(element_ct)
+    local maxsize = STACK_PER_ELEMENT_BUFFER/ffi.sizeof(element_ct)
+    local stack = stack_ct(maxsize)
+
+    array_mt._stack_array = function(self, n, r, c)
+      local p = stack:request(n)
+      return p and array_map(self, n, r, c, p) or array_alloc(self, n, r, c)
+    end
+    array_mt._stack_clear = function()
+      stack:clear()
+    end
+    array_mt._gemm = blas_algo.gemm
+    array_mt._gemv = blas_algo.gemv
+  else
+    array_mt._stack_array = unsupported_element_ct
+    array_mt._stack_clear = unsupported_element_ct
+    array_mt._gemm        = unsupported_element_ct
+  end
+  
+  local ct = ffi.typeof(array_struct, element_ct, element_ct)
+  return ffi.metatype(ct, array_mt)
 end
 
 -- Typeof ----------------------------------------------------------------------
-local alg_elct = { }
 
-local function alg_typeof(elct, elnew)
-  elct = typeof(elct) -- Allows for string definitions.
-  local elctnum = tonumber(elct)
-  if alg_elct[elctnum] then
-    return alg_elct[elctnum]
-  end
-  local stack_elct
-  local function stack()
-    return stack_elct
-  end
-  local vec_ct   = new_vec_ct(elct, elnew, stack)
-  local mat_ct   = new_mat_ct(elct, elnew, stack)
-  local tovec    = new_tovec(vec_ct)
-  local tomat    = new_tomat(mat_ct)
-  local maxstack = buffer/sizeof(elct)
-  stack_elct = new_stack_ct(elct, maxstack, vec_ct, mat_ct)
-  alg_elct[elctnum] = { 
-    vec   = vec_ct, 
-    mat   = mat_ct,
-    tovec = tovec,
-    tomat = tomat,
-    stack = stack_elct,
-  }
-  return alg_elct[elctnum]
+-- To preserve value semantics.
+local allowed_element_ct = { }
+
+local diff = require 'sci.diff'
+
+for ct_name in pairs{
+  bool              = true,
+  char              = true,
+  int8_t            = true,
+  int16_t           = true,
+  int32_t           = true,
+  int64_t           = true,
+  uint8_t           = true,
+  uint16_t          = true,
+  uint32_t          = true,
+  uint64_t          = true,
+  float             = true,
+  double            = true,
+  ['complex float'] = true,
+  complex           = true,
+  [diff.dn]         = true,
+} do
+  local ct_id = tonumber(ffi.typeof(ct_name))
+  allowed_element_ct[ct_id] = true
 end
 
-local alg_double = alg_typeof("double")
+local alg_element_ct = { }
+
+local function alg_typeof(element_ct)
+  element_ct = ffi.typeof(element_ct) -- Allow for strings, now it's ctype.
+  local element_ct_id = tonumber(element_ct)
+  if not allowed_element_ct[element_ct_id] then
+    error('element type "'..tostring(element_ct)..'" not allowed')
+  end
+  
+  if alg_element_ct[element_ct_id] then
+    return alg_element_ct[element_ct_id]
+  end
+
+  local is_diff_dn = element_ct == diff.dn
+  local array_ct = new_array_ct(element_ct, is_diff_dn and element_ct)
+
+  local function vec(n)
+    if n < 0 then
+      error('length '..n..' is negative')
+    end
+    return array_alloc(array_ct, n, n, 1)
+  end
+
+  local function mat(r, c)
+    if r < 0 then
+      error('number of rows '..r..' is negative')
+    end
+    if c < 0 then
+      error('number of columns '..c..' is negative')
+    end
+    return array_alloc(array_ct, r*c, r, c)
+  end
+
+  local function tovec(t)
+    if type(t) ~= 'table' then
+      error('table argument expected, got '..type(t))
+    end
+    local n = #t
+    local a = vec(n)
+    for i=1,n do
+      a[i] = t[i]
+    end
+    return a
+  end
+
+  local function tomat(t)
+    if type(t) ~= 'table' then
+      error('table argument expected, got '..type(t))
+    end
+    local r, c = #t, #t > 0 and #t[1] or 0
+    local a = mat(r, c)
+    for i=1,r do
+      for j=1,c do
+        if #t[i] ~= c then
+          error('all rows of the table must have the same number of elements')
+        end
+        a[{i, j}] = t[i][j]
+      end
+    end
+    return a
+  end
+
+  local alg = { 
+    vec = vec, 
+    mat = mat,
+    tovec = tovec,
+    tomat = tomat,
+    arrayct = array_ct,
+  }
+
+  alg_element_ct[element_ct_id] = alg
+  return alg_element_ct[element_ct_id]
+end
+
+--------------------------------------------------------------------------------
+
+local alg_double = alg_typeof('double')
 
 return {
   typeof = alg_typeof,
-  mulmm  = mulmm,
-  powms  = powms,
-  mulmv  = mulmv,
-  factor = factor,
-  invert = invert,
-  vec    = alg_double.vec,
-  mat    = alg_double.mat,
-  tovec  = alg_double.tovec,
-  tomat  = alg_double.tomat,
-  stack  = alg_double.stack,
+
+  vec = alg_double.vec,
+  mat = alg_double.mat,
+  tovec = alg_double.tovec,
+  tomat = alg_double.tomat,
+  arrayct = alg_double.arrayct,
+
+  join = join,
+
+  mul = mul,
+  pow = pow,
 }
