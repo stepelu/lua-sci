@@ -20,9 +20,8 @@
 local ffi      = require "ffi"
 local dirndata = require "sci.qrng._new-joe-kuo-6-21201"
 local xsys     = require "xsys"
-local cfg      = require "sci.alg.cfg"
 
-local UNROLL = cfg.unroll
+local UNROLL = 10
 
 local bit = xsys.bit
 local tobit, lshift, rshift = bit.tobit, bit.lshift, bit.rshift

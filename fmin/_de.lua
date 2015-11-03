@@ -37,7 +37,7 @@ local normald = dist.normal
 local alg32 = alg.typeof("int32_t")
 
 local function rand_1_bin(v, j, rj, xmin, x, F, K)
-  local j1, j2, j3 = rj[j][1], rj[j][2], rj[j][3]
+  local j1, j2, j3 = rj[{j,1}], rj[{j,2}], rj[{j,3}]
   local x1, x2, x3, F0 = x[j1], x[j2], x[j3], F[j]
   for i=1,#v do 
     v[i] = x1[i] + (x2[i] - x3[i])*F0 
@@ -45,7 +45,7 @@ local function rand_1_bin(v, j, rj, xmin, x, F, K)
 end
 
 local function rand_2_bin(v, j, rj, xmin, x, F, K)
-  local j1, j2, j3, j4, j5 = rj[j][1], rj[j][2], rj[j][3], rj[j][4], rj[j][5]
+  local j1, j2, j3, j4, j5 = rj[{j,1}], rj[{j,2}], rj[{j,3}], rj[{j,4}], rj[{j,5}]
   local x1, x2, x3, x4, x5, F0 = x[j1], x[j2], x[j3], x[j4], x[j5], F[j]
   for i=1,#v do 
     v[i] = x1[i] + (x2[i] - x3[i])*F0 + (x4[i] - x5[i])*F0 
@@ -53,7 +53,7 @@ local function rand_2_bin(v, j, rj, xmin, x, F, K)
 end
 
 local function randtobest_2_bin(v, j, rj, xmin, x, F, K)
-  local j1, j2, j3, j4 = rj[j][1], rj[j][2], rj[j][3], rj[j][4]
+  local j1, j2, j3, j4 = rj[{j,1}], rj[{j,2}], rj[{j,3}], rj[{j,4}]
   local x0, x1, x2, x3, x4, F0 = x[j], x[j1], x[j2], x[j3], x[j4], F[j]
   for i=1,#v do 
     v[i] = x0[i] + (xmin[i] - x0[i])*F0 + (x1[i] - x2[i])*F0 
@@ -62,7 +62,7 @@ local function randtobest_2_bin(v, j, rj, xmin, x, F, K)
 end
 
 local function currenttorand_1(v, j, rj, xmin, x, F, K)
-  local j1, j2, j3 = rj[j][1], rj[j][2], rj[j][3]
+  local j1, j2, j3 = rj[{j,1}], rj[{j,2}], rj[{j,3}]
   local x0, x1, x2, x3, F0, K0 = x[j], x[j1], x[j2], x[j3], F[j], K[j]
   for i=1,#v do 
     v[i] = x0[i] + (x1[i] - x0[i])*K0 + (x2[i] - x3[i])*F0 
@@ -100,7 +100,7 @@ local function sample_distinct_indices(rng, rj)
   while j <= NP do
     local j1, j2, j3, j4, j5 = sample_int(rng, 1, NP), sample_int(rng, 1, NP), 
        sample_int(rng, 1, NP), sample_int(rng, 1, NP), sample_int(rng, 1, NP)
-    rj[j][1], rj[j][2], rj[j][3], rj[j][4], rj[j][5] = j1, j2, j3, j4, j5
+    rj[{j,1}], rj[{j,2}], rj[{j,3}], rj[{j,4}], rj[{j,5}] = j1, j2, j3, j4, j5
     -- Zero if any pairwise match, integer otherwise.
     local m = (j1 - j)
              *(j2 - j1)*(j2 - j)
@@ -177,10 +177,10 @@ local function updatemin(scale, xmin, fmin, vmin, xnew, fnew, vnew)
 end
 
 local function range(x, col)
-  local v = x[1][col]
+  local v = x[{1,col}]
   local l, u = v, v
   for r=2,x:nrow() do
-    v = x[r][col]
+    v = x[{r,col}]
     l = min(l, v)
     u = max(u, v)
   end
@@ -224,7 +224,7 @@ local function rows_as_vec(x)
   for i=1,x:nrow() do
     o[i] = alg.vec(x:ncol())
     for j=1,x:ncol() do
-      o[i][j] = x[i][j]
+      o[i][j] = x[{i,j}]
     end
   end
   return o
@@ -269,7 +269,7 @@ local function optim(scale, f, o)
     for j=1,NP do
       popd:sample(rng, x[j])
       for i=1,dim do
-        xval[j][i] = x[j][i] 
+        xval[{j,i}] = x[j][i] 
       end
     end
   end
@@ -363,7 +363,7 @@ local function optim(scale, f, o)
       end
       -- Update xval for next generation (used only in stop()):
       for i=1,dim do 
-        xval[j][i] = x[j][i] 
+        xval[{j,i}] = x[j][i] 
       end
     end
   end

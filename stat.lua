@@ -5,7 +5,7 @@
 --
 -- Features, documentation and more: http://www.scilua.org .
 --
--- This file is part of the SciLua library, which is released under the MIT 
+-- This file is part of the SciLua library, which is released under the MIT
 -- license: full text in file LICENSE.TXT in the library's root folder.
 --------------------------------------------------------------------------------
 
@@ -19,14 +19,19 @@
 -- TODO: Function join(...) to join results for parallel computing.
 
 -- TODO: Speed-up via OpenBLAS.
--- TODO: Speed-up via FFI cdata.
 
 local ffi = require "ffi" 
 local alg = require "sci.alg"
 
 local sqrt, abs, max, log = math.sqrt, math.abs, math.max, math.log
-local vec, mat = alg.vec, alg.mat
+local vec, mat, arrayct = alg.vec, alg.mat, alg.arrayct
 local typeof, metatype = ffi.typeof, ffi.metatype
+
+local function clear(x)
+  for i=1,#x do
+    x[i] = 0
+  end
+end
 
 local function mean(x)
   if #x < 1 then
@@ -112,7 +117,7 @@ local meand_mt = {
   len = len,
   clear = function(self)
     self._n = 0
-    self._mu:clear()
+    clear(self._mu)
   end,
   push = function(self, x)
     local d = chk_dim(self, x)
@@ -148,7 +153,7 @@ local mean0_mt = {
 }
 mean0_mt.__index = mean0_mt
 
-local meand_ct = typeof("struct { int32_t _d, _n; $& _mu; }", vec)
+local meand_ct = typeof("struct { int32_t _d, _n; $& _mu; }", arrayct)
 local mean0_ct = typeof("struct { int32_t _d, _n; double _mu; }")
 meand_ct = metatype(meand_ct, meand_mt)
 mean0_ct = metatype(mean0_ct, mean0_mt)
@@ -164,8 +169,8 @@ local vard_mt = {
   len = len,
   clear = function(self)
     self._n = 0
-    self._mu:clear()
-    self._s2:clear()
+    clear(self._mu)
+    clear(self._s2)
   end,
   push = function(self, x)
     local d = chk_dim(self, x)
@@ -216,7 +221,7 @@ local var0_mt = {
 var0_mt.__index = var0_mt
 
 local vard_ct = typeof("struct { int32_t _d, _n; $& _mu; $& _delta; $& _s2; }", 
-  vec, vec, vec)
+  arrayct, arrayct, arrayct)
 local var0_ct = typeof("struct { int32_t _d, _n; double _mu, _delta, _s2; }")
 vard_ct = metatype(vard_ct, vard_mt)
 var0_ct = metatype(var0_ct, var0_mt)
@@ -227,11 +232,11 @@ local function covtocor(X, Y)
   for r=1,n do
     for c=1,m do
       if r ~= c then
-        Y[r][c] = X[r][c]/sqrt(X[r][r]*X[c][c])
+        Y[{r,c}] = X[{r,c}]/sqrt(X[{r,r}]*X[{c,c}])
       end
     end
   end
-  for i=1,n do Y[i][i] = 1 end
+  for i=1,n do Y[{i,i}] = 1 end
 end
 
 local function tos_cor(self)
@@ -246,8 +251,8 @@ local covd_mt = {
   len = len,
   clear = function(self)
     self._n = 0
-    self._mu:clear()
-    self._s2:clear()
+    clear(self._mu)
+    clear(self._s2)
   end,
   push = function(self, x)
     local d = chk_dim(self, x)
@@ -258,7 +263,7 @@ local covd_mt = {
       self._mu[i] = self._mu[i] + self._delta[i]*r
     end
     for i=1,d do for j=1,d do
-      self._s2[i][j] = self._s2[i][j] + self._delta[i]*(x[j] - self._mu[j])
+      self._s2[{i,j}] = self._s2[{i,j}] + self._delta[i]*(x[j] - self._mu[j])
     end end
   end,
   mean = meand_mt.mean,
@@ -267,7 +272,7 @@ local covd_mt = {
     if self._n < 2 then
       error("n >= 2 required: n="..self._n)
     end
-    for i=1,d do var[i] = self._s2[i][i]/(self._n - 1) end
+    for i=1,d do var[i] = self._s2[{i,i}]/(self._n - 1) end
   end,
   cov = function(self, cov)
     local n, m = chk_eq_square(self._s2, cov)
@@ -275,7 +280,7 @@ local covd_mt = {
       error("n >= 2 required: n="..self._n)
     end
     for i=1,n do for j=1,m do 
-      cov[i][j] = self._s2[i][j]/(self._n - 1)
+      cov[{i,j}] = self._s2[{i,j}]/(self._n - 1)
     end end
   end,
   cor = function(self, cor)
@@ -287,7 +292,7 @@ local covd_mt = {
 covd_mt.__index = covd_mt
 
 local covd_ct = typeof("struct { int32_t _d, _n; $& _mu; $& _delta; $& _s2; }", 
-  vec, vec, mat)
+  arrayct, arrayct, arrayct)
 covd_ct = metatype(covd_ct, covd_mt)
 
 local samples_mt = {
@@ -308,7 +313,7 @@ local samples_mt = {
       error("output matrix has wrong dimensions")
     end
     for i=1,n do for j=1,m do 
-      samples[i][j] = self._x[i][j]
+      samples[{i,j}] = self._x[{i,j}]
     end end
   end,
 }
