@@ -19,29 +19,31 @@
 -- TODO: For vectors: r = c = 0 or r = 1, c = n ? (totable then changes)
 -- TODO: Minimize dimension and type checks in BLAS operations.
 -- TODO: Can the request to the stack be optimized (is the pointer sunk?) ?
--- TODO: Is it faster to check for aliasing with raweq ?
 -- TODO: better dimension reporting.
 -- TODO: Use column vectors: think of matrix vector ,multiplication.
 -- TODO: Just mul() instead of mulmv() and mulmm().
 -- TODO: Consider avoiding type checks via calls like x:_method_element_type().
+-- TODO: Remove _new.
+-- TODO: Think of removing _gem*.
 
 -- Notes:
 -- + BLAS requires contiguous memory and allows only for aliasing between inputs
 -- + to decide faster way a reasonable number of benchmarks must be available, 
 --   including ones that perform allocations.
 
-local STACK_PER_ELEMENT_BUFFER = 10e6
-assert(STACK_PER_ELEMENT_BUFFER >= 0)
-local JOIN_UNROLL = 5
-assert(JOIN_UNROLL > 0)
-
 local ffi  = require 'ffi'
 local bit  = require 'bit'
 local xsys = require 'xsys'
 
-local type, setmetatable = type, setmetatable
+local STACK_BUFFER = 10e6
+assert(STACK_BUFFER >= 0)
+local STACK_ELEMENT = ffi.typeof('double') -- TODO: Fix casting!
+local JOIN_UNROLL = 5
+assert(JOIN_UNROLL > 0)
+
+local type, setmetatable, rawequal = type, setmetatable, rawequal
 local band = bit.band
-local floor = math.floor
+local floor, ceil = math.floor, math.ceil
 
 local template = xsys.template
 local width = xsys.string.width
@@ -112,6 +114,20 @@ local function new_mem_stack_ct(element_ct)
   return ffi.metatype(stack_ct, stack_mt)
 end
 
+local stack_element_size = ffi.sizeof(STACK_ELEMENT)
+local stack_elements = STACK_BUFFER/stack_element_size
+local stack = new_mem_stack_ct(STACK_ELEMENT)(stack_elements)
+
+local function stack_array(self, n, r, c)
+  local nbuff = ceil(ffi.sizeof(self:elementct())*n/stack_element_size)
+  local p = stack:request(nbuff)
+  return p and array_map(self, n, r, c, ffi.cast(self._p, p)) or array_alloc(self, n, r, c)
+end
+
+local function stack_clear()
+  stack:clear()
+end
+
 -- BLAS ------------------------------------------------------------------------
 local blas_element_code = template([[
 local ffi     = require 'ffi'
@@ -179,13 +195,13 @@ return {
 
 local blas_element_ct = assert(loadstring(blas_element_code))()
 
-local function same_type_2_check(x, y)
+local function same_type_check_2(x, y)
   if x:elementct() ~= y:elementct() then
     error('constant element type required')
   end
 end
 
-local function same_type_3_check(x, y, z)
+local function same_type_check_3(x, y, z)
   local ct = x:elementct()
   if ct ~= y:elementct() or ct ~= z:elementct() then
     error('constant element type required')
@@ -197,48 +213,73 @@ local function dimensions_mat(A, At)
   if At then
     Ar, Ac = Ac, Ar
   end
-  return Ar, Ac
+  return Ar*Ac, Ar, Ac
 end
 
-local function dimensions_mul_check(A, B, At, Bt)
-  local Ar, Ac = dimensions_mat(A, At)
-  local Br, Bc = dimensions_mat(B, Bt)
-  if Ac ~= Br then
-    error("incompatible dimensions in matrix-matrix multiplication")
-  end
-  return Ar, Bc
-end
-
-local function dimensions_mat_same_check(A, At, nrow, ncol)
-  local Ar, Ac = dimensions_mat(A, At)
-  if Ar ~= nrow or Ac ~= ncol then
-    error('unexpected matrix dimensions')
+local function dimensions_mat_same_check(A, At, Br, Bc)
+  local _, Ar, Ac = dimensions_mat(A, At)
+  if Ar ~= Br or Ac ~= Bc then
+    error('matrix dimensions disagree')
   end
 end
 
-local function dimensions_mat_square_check(A)
-  if A:nrow() ~= A:ncol() then
+local function dimensions_mat_square_check(Ar, Ac)
+  if Ar ~= Ac then
     error('square matrix expected')
   end
 end
 
-local function mul(C, A, B, At, Bt)
-  same_type_3_check(C, A, B)
-  local Cr, Cc = dimensions_mul_check(A, B, At, Bt)
+local function dimensions_mul_check_2(A, B, At, Bt)
+  local _, Ar, Ac = dimensions_mat(A, At)
+  local _, Br, Bc = dimensions_mat(B, Bt)
+  if Ac ~= Br then
+    error("incompatible dimensions in matrix-matrix multiplication")
+  end
+  return Ar*Bc, Ar, Bc
+end
+
+local function dimensions_mul_check_3(C, A, B, At, Bt)
+  local Cn, Cr, Cc = dimensions_mul_check_2(A, B, At, Bt)
   dimensions_mat_same_check(C, false, Cr, Cc)
-  local T = C:_stack_array(Cr*Cc, Cr, Cc)
+  return Cn, Cr, Cc
+end
+
+local function dimensions_pow_check_1(A)
+  local An, Ar, Ac = dimensions_mat(A)
+  dimensions_mat_square_check(Ar, Ac)
+  return An, Ar, Ac
+end
+
+local function dimensions_pow_check_2(B, A)
+  local An, Ar, Ac = dimensions_pow_check_1(A)
+  dimensions_mat_same_check(B, false, Ar, Ac)
+  return An, Ar, Ac
+end
+
+local function __mul(C, A, B, At, Bt)
+  same_type_check_3(C, A, B)
+  local Cn, Cr, Cc = dimensions_mat(C)
+  local alias = rawequal(C, A) or rawequal(C, B)
+  local T = alias and stack_array(C, Cn, Cr, Cc) or C
   if Cc == 1 then
     T:_gemv(A, B, At, 1, 0)
   else
     T:_gemm(A, B, At, Bt, 1, 0)
   end
-  array_copy_data(C, T)
-  C:_stack_clear()
+  if alias then
+    array_copy_data(C, T)
+  end
+end
+
+local function mul(C, A, B, At, Bt)
+  dimensions_mul_check_3(C, A, B, At, Bt)
+  __mul(C, A, B, At, Bt)
+  stack_clear()
 end
 
 -- Exponentiation by squaring algorithm:
 local function pow_recursive(A, s, n)
-  local T = A:_stack_array(n*n, n, n)
+  local T = stack_array(A, n*n, n, n)
   if s == 1 then
     -- Cannot return A because could generate aliasing between R and T below.
     array_copy_data(T, A)
@@ -271,14 +312,28 @@ local function pow_dispatch(B, A, s)
 end
 
 -- TODO: Use SVD decomposition for large s and allow positive real s.
-local function pow(B, A, s)
-  same_type_2_check(B, A)
-  dimensions_mat_square_check(B, A)
+local function __pow(B, A, s)
+  same_type_check_2(B, A)
   if s < 0 or floor(s) ~= s then
     error('NYI: matrix exponentiation supported only for nonnegative integers')
   end
   pow_dispatch(B, A, s)
-  B:_stack_clear()
+end
+
+local function pow(B, A, s)
+  dimensions_pow_check_2(B, A)
+  __pow(B, A, s)
+  stack_clear()
+end
+
+local function trace(A)
+  local _, Ar, Ac = dimensions_mat(A)
+  dimensions_mat_square_check(Ar, Ac)
+  local v = 0
+  for i=1,Ar do
+    v = v + A[{i,i}]
+  end
+  return v
 end
 
 -- Join ------------------------------------------------------------------------
@@ -475,7 +530,7 @@ local function new_array_ct(element_ct, element_copy)
       if lhs:nrow() ~= rhs:nrow() then
         error('constant number of rows required')
       end
-      same_type_2_check(lhs, rhs)
+      same_type_check_2(lhs, rhs)
       return rhs:_concat_dispatch(lhs)
     end,
     sub = function(self, f, l)
@@ -601,23 +656,11 @@ local function new_array_ct(element_ct, element_copy)
 
   local blas_algo = blas_element_ct[element_ct_id]
   if blas_algo then
-    local stack_ct = new_mem_stack_ct(element_ct)
-    local maxsize = STACK_PER_ELEMENT_BUFFER/ffi.sizeof(element_ct)
-    local stack = stack_ct(maxsize)
-
-    array_mt._stack_array = function(self, n, r, c)
-      local p = stack:request(n)
-      return p and array_map(self, n, r, c, p) or array_alloc(self, n, r, c)
-    end
-    array_mt._stack_clear = function()
-      stack:clear()
-    end
     array_mt._gemm = blas_algo.gemm
     array_mt._gemv = blas_algo.gemv
   else
-    array_mt._stack_array = unsupported_element_ct
-    array_mt._stack_clear = unsupported_element_ct
-    array_mt._gemm        = unsupported_element_ct
+    array_mt._gemm = unsupported_element_ct
+    array_mt._gemv = unsupported_element_ct
   end
   
   local ct = ffi.typeof(array_struct, element_ct, element_ct)
@@ -727,7 +770,35 @@ local function alg_typeof(element_ct)
 end
 
 --------------------------------------------------------------------------------
+local __code = template([[
+return {
+| for NEL = 1,10 do
+  dim_elw_${NEL} = function(${R('__x@', 1, NEL)})
+    local n, r, c = __x1._n, __x1._r, __x1._c
+| for N=2,NEL do
+    if ${R('__x@._r ~= r or __x@._c ~= c', 2, N, ' or ')} then
+      error('incompatible dimensions in element-wise operation')
+    end
+| end
+    return n, r, c
+  end,
+| end
+}
+]])({ R = rep })
 
+local __ = assert(loadstring(__code))()
+
+__.array_alloc = array_alloc
+__.stack_array = stack_array
+__.stack_clear = stack_clear
+__.mul = __mul
+__.pow = __pow
+__.dim_pow_1 = dimensions_pow_check_1
+__.dim_pow_2 = dimensions_pow_check_2
+__.dim_mul_2 = dimensions_mul_check_2
+__.dim_mul_3 = dimensions_mul_check_3
+
+--------------------------------------------------------------------------------
 local alg_double = alg_typeof('double')
 
 return {
@@ -743,4 +814,8 @@ return {
 
   mul = mul,
   pow = pow,
+
+  trace = trace,
+
+  __ = __,
 }
