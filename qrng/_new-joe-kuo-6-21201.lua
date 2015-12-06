@@ -1,18 +1,13 @@
 --------------------------------------------------------------------------------
 -- Sobol direction numbers data module.
 --
--- Copyright (C) 2011-2014 Stefano Peluchetti. All rights reserved.
---
--- Features, documentation and more: http://www.scilua.org .
---
 -- Credit: this direction numbers data has been obtained from:
 -- http://web.maths.unsw.edu.au/~fkuo/sobol/ .
 -- Please notice that the code written in this file is NOT endorsed in any way 
 -- by the original authors of the direction numbers data, S. Joe and F. Y. Kuo.
 -- Any bug / problem introduced in this port is my sole responsibility.
 --
--- This file is part of the SciLua library, which is released under the MIT 
--- license: full text in file LICENSE.TXT in the library's root folder.
+-- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- Seems there is no advantage here for use of sci.alg.

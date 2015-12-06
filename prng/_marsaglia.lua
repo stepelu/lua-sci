@@ -1,15 +1,10 @@
 --------------------------------------------------------------------------------
 -- George Marsaglia pseudo rngs module.
 --
--- Copyright (C) 2011-2014 Stefano Peluchetti. All rights reserved.
---
--- Features, documentation and more: http://www.scilua.org .
---
 -- Credit: George Marsaglia Newsgroups posted code:
 -- http://www.math.niu.edu/~rusin/known-math/99/RNG .
 --
--- This file is part of the SciLua library, which is released under the MIT 
--- license: full text in file LICENSE.TXT in the library's root folder.
+-- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- These specific implementations have been tested against small, normal and big

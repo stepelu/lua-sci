@@ -1,12 +1,7 @@
 --------------------------------------------------------------------------------
 -- Precomputed abscissas and weights for double exponential quadrature method.
 --
--- Copyright (C) 2011-2014 Stefano Peluchetti. All rights reserved.
---
--- Features, documentation and more: http://www.scilua.org .
---
--- This file is part of the SciLua library, which is released under the MIT 
--- license: full text in file LICENSE.TXT in the library's root folder.
+-- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- Weights and abscissas computed using the MPRF library with 120 bits of 

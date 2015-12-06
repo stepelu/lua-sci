@@ -1,10 +1,6 @@
 --------------------------------------------------------------------------------
 -- Sobol quasi random number generator module.
 --
--- Copyright (C) 2011-2014 Stefano Peluchetti. All rights reserved.
---
--- Features, documentation and more: http://www.scilua.org .
---
 -- Credit: this implementation is based on the code published at:
 -- http://web.maths.unsw.edu.au/~fkuo/sobol/ .
 -- Please notice that the code written in this file is NOT endorsed in any way 
@@ -13,8 +9,7 @@
 -- this Lua implementation.
 -- Any bug / problem introduced in this port is my sole responsibility.
 --
--- This file is part of the SciLua library, which is released under the MIT 
--- license: full text in file LICENSE.TXT in the library's root folder.
+-- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 local ffi      = require "ffi"
