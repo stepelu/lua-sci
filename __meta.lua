@@ -1,6 +1,6 @@
 return {
   name = "sci",
-  version = "1.0.beta10",
+  version = "1.0.beta11",
   require = {
     luajit = "2.0",
     xsys   = "1.0",
