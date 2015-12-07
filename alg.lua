@@ -321,6 +321,20 @@ local function pow(B, A, s)
   stack_clear()
 end
 
+--------------------------------------------------------------------------------
+
+local function sum(x)
+  local v = 0
+  for i=0,#x-1 do v = v + x._p[i] end
+  return v
+end
+
+local function prod(x)
+  local v = 1
+  for i=0,#x-1 do v = v * x._p[i] end
+  return v
+end
+
 local function trace(A)
   local _, Ar, Ac = dimensions_mat(A)
   dimensions_mat_square_check(Ar, Ac)
@@ -810,6 +824,8 @@ return {
   mul = mul,
   pow = pow,
 
+  sum   = sum,
+  prod  = prod,
   trace = trace,
 
   __ = __,
