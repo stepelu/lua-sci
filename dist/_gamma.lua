@@ -22,39 +22,20 @@ local nd01 = _normal.dist(0, 1)
 -- Based on Marsaglia-Tsang method, valid for a >= 1, see:
 -- http://www.cparity.com/projects/AcmClassification/samples/358414.pdf .
 -- PERF: not worth checking for v <= 0 separately.
-local function samplea1b(a, b, rng)
-  local d = a - 1/3
-  local c = 1/sqrt(9*d)
-  
-  do -- PERF: avoid (>95% of the time) problematic loop below with this: 
-    local x = nd01:sample(rng)
-    local v = (1 + c*x)^3
-    local u = rng:sample()
-    if min(v, 1 - 0.0331*x^4 - u) > 0 -- Squeeze, around 92% of the time.
-    or min(v, -log(u) + 0.5*x^2 + d*(1 - v + log(v))) > 0 then
-      return v*d/b -- v*d ~ gamma(a), scaling: v*d/b ~ gamma(a, b).
-    end
+local function marstang(a, rng)
+  local x = nd01:sample(rng)
+  local v = (1 + x/sqrt(9*(a - 1/3)))^3
+  local u = rng:sample()
+  if min(v, 1 - 0.0331*x^4 - u) > 0 -- Squeeze, around 92% of the time.
+  or min(v, -log(u) + 0.5*x^2 + (a - 1/3)*(1 - v + log(v))) > 0 then
+    return v*(a - 1/3)
   end
-  
-  -- PERF: better this than 'repeat until' alternative, as it allows to return
-  -- PERF: directly from within the loop:
-  while true do
-    local x = nd01:sample(rng)
-    local v = (1 + c*x)^3
-    -- PERF: squeeze step not worth here.
-    if min(v, -log(rng:sample()) + 0.5*x^2 + d*(1 - v + log(v))) > 0 then
-      return v*d/b -- v*d ~ gamma(a), scaling: v*d/b ~ gamma(a, b).
-    end
-  end
+  return marstang(a, rng)
 end
 
 local function sampleab(a, b, rng)
-  if a >= 1 then
-    return samplea1b(a, b, rng)
-  else
-    local y = samplea1b(a + 1, b, rng)
-    return rng:sample()^(1/a)*y
-  end
+  return a >= 1 and marstang(a, rng)/b
+                 or marstang(a + 1, rng)/b*rng:sample()^(1/a)
 end
      
 local gamm_mt = {
