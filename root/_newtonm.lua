@@ -1,7 +1,7 @@
 ﻿--------------------------------------------------------------------------------
 -- Newton-type methods for root finding module.
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- TODO: Consider math.abs(y0) < epsilon safeguard instead of y0 == 0.

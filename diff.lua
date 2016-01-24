@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- Automatic differentiation module.
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- TODO: Specialized gamma, loggamma, beta, logbeta.

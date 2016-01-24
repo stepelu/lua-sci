@@ -4,7 +4,7 @@
 -- http://crd-legacy.lbl.gov/~dhbailey/dhbpapers/dhb-tanh-sinh.pdf
 -- and its references.
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- TODO: Unrolling to improve performance.

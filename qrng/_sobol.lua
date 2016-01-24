@@ -9,7 +9,7 @@
 -- this Lua implementation.
 -- Any bug / problem introduced in this port is my sole responsibility.
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 local ffi      = require "ffi"

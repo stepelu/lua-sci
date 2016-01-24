@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- Pierre L'Ecuyer MRG pseudo rngs module.
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- This specific implementation has been tested against small, normal and big

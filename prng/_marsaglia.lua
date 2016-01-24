@@ -4,7 +4,7 @@
 -- Credit: George Marsaglia Newsgroups posted code:
 -- http://www.math.niu.edu/~rusin/known-math/99/RNG .
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- These specific implementations have been tested against small, normal and big

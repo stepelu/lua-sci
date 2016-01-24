@@ -2,7 +2,7 @@
 -- CBLAS header cdef, converted from the official cblas.h header from:
 -- http://www.netlib.org/blas/blast-forum/cblas.tgz
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 return [[

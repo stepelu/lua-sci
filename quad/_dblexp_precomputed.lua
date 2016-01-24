@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- Precomputed abscissas and weights for double exponential quadrature method.
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- Weights and abscissas computed using the MPRF library with 120 bits of 

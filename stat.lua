@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- Statistical functions module.
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- Variances and covariances are computed according to the unbiased version of

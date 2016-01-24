@@ -7,7 +7,7 @@
 -- by the original authors of the direction numbers data, S. Joe and F. Y. Kuo.
 -- Any bug / problem introduced in this port is my sole responsibility.
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- Seems there is no advantage here for use of sci.alg.

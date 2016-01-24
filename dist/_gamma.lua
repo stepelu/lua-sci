@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- Gamma statistical distribution.
 --
--- Copyright (C) 2011-2015 Stefano Peluchetti. All rights reserved.
+-- Copyright (C) 2011-2016 Stefano Peluchetti. All rights reserved.
 --------------------------------------------------------------------------------
 
 -- TODO: consider branchless-free loop (see Mike mail) for vector sampling, 
