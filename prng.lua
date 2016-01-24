@@ -33,4 +33,24 @@ end
 
 M.restore = restore
 
+local function new_parallel(rng, totalperiod)
+  return function(n)
+    local log2n = math.ceil(math.log(n)/math.log(2)) -- Log2.
+    local rngperiod = totalperiod - log2n
+    local r = rng()
+    local out = { }
+    for i=1,n do
+      out[i] = r:copy()
+      r:_sampleahead2pow(rngperiod)
+    end
+    return out
+  end
+end
+
+M.parallel = {
+  mrg32k3a = new_parallel(M.mrg32k3a, 191),
+}
+
+M.parallel.std = M.parallel.mrg32k3a
+
 return M
