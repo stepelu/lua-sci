@@ -73,7 +73,7 @@ local function sarg(...)
 end
 
 local mrg_mt = {
-  __new = function(ct, self) -- TODO: Check, either new or copy are broken.
+  __new = function(ct, self)
     return ffi.new(ct, y0, y0, y0, y0, y0, y0)
   end,
   __tostring = function(self)
@@ -94,7 +94,8 @@ local mrg_mt = {
     -- assert(math.abs(a21*self._y21 + a23*self._y23) < 2^53)
     local p2 = (a21*self._y21 + a23*self._y23) % m2
     self._y23 = self._y22; self._y22 = self._y21; self._y21 = p2  
-    return ((p1 - p2) % m1)*scale -- PERF: this branchless version is faster.
+    -- This branchless version is faster, shift by 1 instead of branching:
+    return ((p1 - p2) % m1 + 1)*scale
   end,
   -- Skip ahead 2^k samples and returns last sample.
   -- Notice n = 2^k, k >= 1.
@@ -109,8 +110,8 @@ local mrg_mt = {
     self._y21 = vvmodmul(A2, 1, y21, y22, y23, m2)
     self._y22 = vvmodmul(A2, 2, y21, y22, y23, m2)
     self._y23 = vvmodmul(A2, 3, y21, y22, y23, m2)
-    -- PERF: this branchless version is faster:
-    return ((self._y11 - self._y21)%m1)*scale
+    -- This branchless version is faster, shift by 1 instead of branching:
+    return ((self._y11 - self._y21) % m1 + 1)*scale
   end
 }
 mrg_mt.__index = mrg_mt
