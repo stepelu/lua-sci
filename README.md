@@ -1,9 +1,9 @@
-Sci
-======
+SciLua: Scientific Computing with LuaJIT
+========================================
 
-This is a MIT licensed library for general purpose scientific computing with Lua based on LuaJIT. 
+A complete framework for numerical computing based on LuaJIT which combines the ease of use of scripting languages (MATLAB, R, ...) with the high performance of compiled languages (C/C++, Fortran, ...).
 
-It is composed of the following sub-modules:
+## Modules
 
 <table>
 <tr><th>Sub-Module</th><th>Description</th></tr>
@@ -21,4 +21,15 @@ It is composed of the following sub-modules:
 <tr><td><code><a href="http://www.scilua.org/sci_mcmc.html">sci.mcmc</a></code></td><td>MCMC algorithms</td></tr>
 </table>
 
-The Sci library is part of the <a href="http://www.scilua.org">SciLua</a> framework which aims to offer a framework for numerical computing which combines the ease of use of scripting languages (Matlab, R, ...) with the high performance of compiled languages (C/C++, Fortran, ...). Please refer to the project's homepage for more information.
+## Install
+
+This module is included in the [ULua](http://ulua.io) distribution, to install it use:
+```
+upkg add sci
+```
+
+Alternatively, manually install this module making sure that all dependencies listed in the `require` section of [`__meta.lua`](__meta.lua) are installed as well (dependencies starting with `clib_` are standard C dynamic libraries).
+
+## Documentation
+
+Refer to the [official documentation](http://scilua.org).
