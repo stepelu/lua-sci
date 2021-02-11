@@ -13,7 +13,6 @@ description = {
 }
 dependencies = {
    "lua >= 5.1, < 5.4",
-   "luajit >= 2.0",
    "xsys >= 1.0"
 }
 build = {
